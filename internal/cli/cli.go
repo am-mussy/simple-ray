@@ -478,14 +478,14 @@ func (c *CLI) showUser(ctx context.Context, opts Options, name string, decorated
 		fmt.Fprintln(c.Out, link)
 		return nil
 	}
-	fmt.Fprintf(c.Out, "Клиент: %s\n\n%s\n\n%s\n", user.Name, terminalQR(link), link)
+	fmt.Fprintf(c.Out, "Клиент: %s\n\n%s\n\n%s\n", user.Name, terminalQRCompact(link), link)
 	return nil
 }
 
 func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("qr")
 	format := set.String("format", "", "terminal или uri")
-	compact := set.Bool("compact", false, "компактный QR-код в терминале")
+	set.Bool("compact", false, "компактный QR-код в терминале")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 1 {
 		return usage("использование: vpnctl qr <имя> [--format terminal|uri] [--compact]")
@@ -509,10 +509,8 @@ func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 	}
 	if *format == "uri" {
 		fmt.Fprintln(c.Out, link)
-	} else if *compact {
-		fmt.Fprintln(c.Out, terminalQRCompact(link))
 	} else {
-		fmt.Fprintln(c.Out, terminalQR(link))
+		fmt.Fprintln(c.Out, terminalQRCompact(link))
 	}
 	return nil
 }

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -253,7 +255,27 @@ func (s *Service) UserLink(ctx context.Context, rawName string) (domain.User, st
 	if len(links) == 0 {
 		return domain.User{}, "", domain.E("LINK_UNAVAILABLE", "не удалось создать ссылку VPN-клиента", "Запусти sudo vpnctl doctor", 1, nil)
 	}
-	return toUser(record), links[0], nil
+	link, err := publicClientLink(links[0], installation.PublicAddress, installation.ListenPort)
+	if err != nil {
+		return domain.User{}, "", domain.E("LINK_UNAVAILABLE", "3x-ui вернул некорректную ссылку VPN-клиента", "Запусти sudo vpnctl doctor", 1, err)
+	}
+	return toUser(record), link, nil
+}
+
+func publicClientLink(raw, address string, port int) (string, error) {
+	link, err := url.Parse(raw)
+	if err != nil || link.Scheme != "vless" || link.User == nil || link.User.Username() == "" || link.User.String() != link.User.Username() {
+		return "", errors.New("invalid VLESS URI")
+	}
+	if net.ParseIP(address) == nil || port < 1 || port > 65535 {
+		return "", errors.New("invalid public endpoint")
+	}
+	link.Host = net.JoinHostPort(address, strconv.Itoa(port))
+	link.Path = ""
+	query := link.Query()
+	query.Set("encryption", "none")
+	link.RawQuery = query.Encode()
+	return link.String(), nil
 }
 
 func (s *Service) Backup(ctx context.Context, destination string, plaintextAcknowledged bool) (backup.Result, error) {
