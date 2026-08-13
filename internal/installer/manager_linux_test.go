@@ -83,6 +83,9 @@ func TestRealityPayloadMatchesV350Shape(t *testing.T) {
 	if !ok || reality["target"] != "example.com:443" || reality["privateKey"] != "private" {
 		t.Fatalf("reality settings = %#v", stream["realitySettings"])
 	}
+	if reality["minClientVer"] != "25.1.30" {
+		t.Fatalf("minimum client version = %#v", reality["minClientVer"])
+	}
 }
 
 func TestParseTokenRejectsAmbiguousOutput(t *testing.T) {

@@ -748,7 +748,7 @@ func parseToken(output string) (string, error) {
 
 func realityPayload(r Request, keys xui.KeyPair, shortID string) map[string]any {
 	settings := encodeJSON(map[string]any{"clients": []any{}, "decryption": "none", "fallbacks": []any{}})
-	streamSettings := encodeJSON(map[string]any{"network": "tcp", "security": "reality", "externalProxy": []any{}, "realitySettings": map[string]any{"show": false, "xver": 0, "target": r.RealityTarget, "serverNames": []string{r.RealitySNI}, "privateKey": keys.PrivateKey, "shortIds": []string{shortID}, "settings": map[string]any{"publicKey": keys.PublicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"}}, "tcpSettings": map[string]any{"acceptProxyProtocol": false, "header": map[string]any{"type": "none"}}})
+	streamSettings := encodeJSON(map[string]any{"network": "tcp", "security": "reality", "externalProxy": []any{}, "realitySettings": map[string]any{"show": false, "xver": 0, "target": r.RealityTarget, "serverNames": []string{r.RealitySNI}, "privateKey": keys.PrivateKey, "shortIds": []string{shortID}, "minClientVer": "25.1.30", "settings": map[string]any{"publicKey": keys.PublicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"}}, "tcpSettings": map[string]any{"acceptProxyProtocol": false, "header": map[string]any{"type": "none"}}})
 	sniffing := encodeJSON(map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false})
 	return map[string]any{"enable": true, "remark": managedRemark, "listen": "", "port": r.ListenPort, "protocol": "vless", "expiryTime": 0, "total": 0, "settings": settings, "streamSettings": streamSettings, "sniffing": sniffing}
 }
