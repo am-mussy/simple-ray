@@ -251,11 +251,11 @@ func detectSSHPort(ctx context.Context, runner Runner, explicit int) (int, error
 		return 0, err
 	}
 	if explicit < 0 || explicit > 65535 {
-		return 0, errors.New("SSH listener port is invalid")
+		return 0, errors.New("некорректный порт SSH")
 	}
 	if explicit > 0 {
 		if connected && connectionPort != explicit {
-			return 0, errors.New("--ssh-port does not match the active SSH connection")
+			return 0, errors.New("--ssh-port не совпадает с активным SSH-соединением")
 		}
 		return explicit, nil
 	}
@@ -270,9 +270,9 @@ func detectSSHPort(ctx context.Context, runner Runner, explicit int) (int, error
 		return ports[0], nil
 	}
 	if len(ports) > 1 {
-		return 0, errors.New("multiple SSH listeners detected; pass --ssh-port")
+		return 0, errors.New("обнаружено несколько SSH-портов; передай --ssh-port")
 	}
-	return 0, errors.New("SSH listener could not be detected; pass --ssh-port")
+	return 0, errors.New("не удалось определить порт SSH; передай --ssh-port")
 }
 
 func sshConnectionPort() (int, bool, error) {
@@ -282,7 +282,7 @@ func sshConnectionPort() (int, bool, error) {
 	}
 	port, err := strconv.Atoi(fields[3])
 	if err != nil || port < 1 || port > 65535 {
-		return 0, false, errors.New("SSH listener port is invalid")
+		return 0, false, errors.New("некорректный порт SSH")
 	}
 	return port, true, nil
 }
@@ -312,7 +312,7 @@ func verifySSHListener(ctx context.Context, runner Runner, port int) error {
 		return err
 	}
 	if connected && connectionPort != port {
-		return errors.New("--ssh-port does not match the active SSH connection")
+		return errors.New("--ssh-port не совпадает с активным SSH-соединением")
 	}
 	ports, err := sshListenerPorts(ctx, runner)
 	if err != nil {
@@ -323,13 +323,13 @@ func verifySSHListener(ctx context.Context, runner Runner, port int) error {
 			return nil
 		}
 	}
-	return errors.New("active SSH port is not listening")
+	return errors.New("активный порт SSH не прослушивается")
 }
 
 func sshListenerPorts(ctx context.Context, runner Runner) ([]int, error) {
 	output, err := runner.Run(ctx, "ss", "-H", "-ltnp")
 	if err != nil {
-		return nil, errors.New("SSH listeners could not be inspected")
+		return nil, errors.New("не удалось проверить SSH-порты")
 	}
 	unique := map[int]struct{}{}
 	for _, line := range strings.Split(string(output), "\n") {

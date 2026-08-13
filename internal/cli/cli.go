@@ -269,7 +269,7 @@ func lookupPublicAddress(ctx context.Context) (string, error) {
 			return errors.New("public address endpoint redirected")
 		},
 	}
-	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, "https://api64.ipify.org", nil)
+	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, "https://api.ipify.org", nil)
 	if err != nil {
 		return "", err
 	}

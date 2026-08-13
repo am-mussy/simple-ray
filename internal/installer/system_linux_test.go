@@ -108,7 +108,7 @@ func TestDetectSSHPortFromListenerWithoutSSHEnvironment(t *testing.T) {
 func TestDetectSSHPortRejectsAmbiguousListenersWithoutExplicitPort(t *testing.T) {
 	t.Setenv("SSH_CONNECTION", "")
 	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltnp": []byte("LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\nLISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:((\"sshd\",pid=1,fd=4))\n")}}
-	if _, err := detectSSHPort(context.Background(), runner, 0); err == nil || !strings.Contains(err.Error(), "multiple SSH listeners") {
+	if _, err := detectSSHPort(context.Background(), runner, 0); err == nil || !strings.Contains(err.Error(), "несколько SSH-портов") {
 		t.Fatalf("error = %v", err)
 	}
 }
