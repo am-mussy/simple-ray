@@ -1,5 +1,39 @@
 # vpnctl security audit and threat model
 
+## Post-review remediation — 2026-08-13
+
+Two additional reachable High findings were reported after the final
+implementation retest and are fixed in the current tree:
+
+- **Root source-test execution.** The documented `sudo bash start.sh` path ran
+  `go test ./...` and `go vet ./...` as root, allowing test code and downloaded
+  module code to execute before installation. `start.sh` now archives the
+  checkout without executing repository-configured Git helpers, creates a
+  private build workspace, clears the environment with `env -i`, disables
+  `GOENV` and workspaces, and runs test, vet and build as the invoking
+  non-root user or an unused isolated numeric UID with all capability sets
+  cleared. It verifies the observed build UID is nonzero.
+  Only the atomic `/usr/local/bin` install and the system configuration run
+  with elevated privileges. The preferred command is `bash start.sh`, not
+  `sudo bash start.sh`. Residual boundary: a source script explicitly started
+  as root is itself trusted code; privilege dropping cannot authenticate a
+  malicious script that has already begun executing.
+- **Attacker-creatable mutation lock.** The CLI used
+  `/run/lock/vpnctl.lock`, while `/run/lock` is mode `1777` on supported
+  Ubuntu systems. A local user could pre-create the directory and a valid-looking
+  `owner.json` referencing PID 1 to block every mutation. The lock is now the
+  persistent file `/run/vpnctl/lock` inside an exact-owner `0700` runtime
+  directory. Linux opens it with `O_NOFOLLOW|O_CLOEXEC`, validates a regular
+  exact-owner `0600` inode, and holds `flock(LOCK_EX|LOCK_NB)` on the open file
+  descriptor. Release closes the descriptor and never removes attacker-shaped
+  trees. Kernel process teardown releases the lock after SIGKILL.
+
+Regression coverage rejects unsafe/symlink runtime directories and unsafe lock
+files, verifies mutual exclusion, and runs a Linux child-process death test.
+The source-installer contract checks the sanitized non-root execution path.
+The release remains blocked independently by the open Critical publisher-
+authentication finding for `scripts/install.sh`.
+
 ## Final implementation retest — 2026-08-13
 
 Release verdict: **BLOCKED**.

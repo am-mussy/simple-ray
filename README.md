@@ -13,10 +13,10 @@ Until signed GitHub Releases are available, install directly from a reviewed sou
 ```bash
 git clone https://github.com/am-mussy/simple-ray.git
 cd simple-ray
-sudo bash start.sh
+bash start.sh
 ```
 
-`start.sh` downloads a checksum-pinned temporary Go toolchain, runs tests and vet, builds and atomically installs `vpnctl`, then starts the interactive wizard. It does not install Go system-wide.
+`start.sh` downloads a checksum-pinned temporary Go toolchain, runs tests, vet and the build without root privileges, elevates only for the atomic install and system setup, then starts the interactive wizard. It does not install Go system-wide.
 
 Download the bootstrap first if you want to inspect it:
 

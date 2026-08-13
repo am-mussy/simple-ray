@@ -145,22 +145,40 @@ for the other Ubuntu/architecture combinations.
 - Fix evidence: strict architecture, IP, privileged panel-port policy, base-path,
   target and SNI validation; `TestValidateStateRejectsUnsafeRoutingFields` passes.
 
-### QA-009 — Crash before lock metadata created a permanent mutation lock
+### QA-009 — Directory/PID mutation lock allowed permanent local DoS
 
 - Severity: High
 - Status: Fixed and regression-covered
-- Affected: `internal/lock/lock.go`
-- Reproduction: create an old `/run/lock/vpnctl.lock` directory without
-  `owner.json`, modelling SIGKILL after `Mkdir` and before metadata write. Every
-  later `Acquire` returns `LOCKED` because unreadable metadata is never stale.
-- Fix evidence: an incomplete directory older than one minute is quarantined;
-  a fresh incomplete directory is not stolen;
-  `TestAcquireRecoversOldLockDirectoryWithoutMetadata` passes.
+- Affected: `cmd/vpnctl/main.go`, `internal/lock/lock_linux.go`
+- Reproduction: `/run/lock` is `1777` on Ubuntu. A local user can create
+  `/run/lock/vpnctl.lock/owner.json` with a nonempty nonce and PID 1; every
+  later root `Acquire` reports an active mutation. The old recovery path also
+  renamed and recursively removed a tree selected by the attacker.
+- Fix evidence: the lock moved to `/run/vpnctl/lock`; its parent must be an
+  exact-owner `0700` directory and the persistent lock inode must be regular,
+  exact-owner and `0600`. Linux uses nonblocking `flock` on an open no-follow
+  descriptor and never removes the lock file or a quarantine tree.
 - Impact: all user mutations and backup remain unavailable until manual cleanup;
-  repeated command recovery is not guaranteed. Reboot usually clears `/run`, but
-  SIGKILL without reboot is a required scenario.
-- Residual: PID reuse is not distinguished from the original live owner. An
-  OS-released advisory lock (`flock`) remains the stronger long-term design.
+  a local attacker can recreate the condition after reboot.
+- Regression: unsafe directory, symlink and lock-file tests pass; concurrent
+  acquisition is rejected; a killed lock-owning process releases the kernel
+  lock without stale metadata recovery.
+
+### QA-014 — Source tests executed with EUID 0
+
+- Severity: High
+- Status: Fixed and regression-covered
+- Affected: `start.sh`, `scripts/start_test.sh`, `README.md`
+- Reproduction: the documented `sudo bash start.sh` path directly executed
+  `go test ./...` and `go vet ./...`; a test body or accepted module change
+  therefore ran before installation with EUID 0.
+- Fix evidence: the preferred command is `bash start.sh`. Test, vet and build
+  run through an `env -i` boundary as a verified nonzero UID, with `GOENV=off`,
+  `GOWORK=off`, `CGO_ENABLED=0` and private build/cache directories. Root is
+  used only for the atomic binary install and system setup.
+- Residual: executing an attacker-controlled shell script with `sudo bash`
+  already grants that script root independently of Go; source-install users
+  must review/authenticate the checkout or use the future signed release path.
 
 ### QA-010 — Delete-client response parsing accepted trailing/oversized data
 
@@ -286,8 +304,8 @@ for the other Ubuntu/architecture combinations.
   envelopes and does not log response bodies or bearer tokens.
 - CLI JSON errors expose public domain messages rather than wrapped causes.
 - User names reject shell/path metacharacters and are trimmed only at edges.
-- Mutating user/backup commands share an exclusive lock; stale dead-PID recovery
-  exists when valid metadata was written.
+- Mutating user/backup commands share an exclusive kernel `flock` in the
+  root-owned `/run/vpnctl` runtime directory; process exit releases it.
 - CI actions are commit-SHA pinned and workflow permissions are read-only.
 
 ## Required retest before release

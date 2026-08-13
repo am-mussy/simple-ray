@@ -24,7 +24,7 @@ func main() {
 		return
 	}
 	store := state.New("/var/lib/vpnctl")
-	service := app.New(store, "/run/lock/vpnctl.lock")
+	service := app.New(store, "/run/vpnctl/lock")
 	command := &cli.CLI{Service: service, In: os.Stdin, Out: os.Stdout, Err: os.Stderr, IsTTY: isTerminal(os.Stdout)}
 	code := command.Run(ctx, os.Args[1:])
 	if ctx.Err() != nil && code == 0 {

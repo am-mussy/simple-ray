@@ -35,6 +35,10 @@ Critical and High findings block a release. A compromised signing identity, rele
 
 ## Secure installation and operation
 
+- Run a reviewed source checkout with `bash start.sh`, without prefixing the
+  whole script with `sudo`. The script builds and tests without privileges and
+  requests elevation only for installation and system configuration. A script
+  deliberately started as root must itself already be trusted.
 - Prefer the documented download, verification, and execution flow over piping a network response directly to a root shell.
 - Install only versioned release artifacts whose digest and release identity have been verified. A checksum downloaded from the same unauthenticated location as the artifact detects corruption but does not establish publisher identity.
 - Keep the 3x-ui panel and its API bound to loopback by default and access them through SSH port forwarding. A random port or path is only defense in depth.
@@ -48,4 +52,3 @@ Critical and High findings block a release. A compromised signing identity, rele
 The project aims to protect against network attackers, unauthenticated panel access, malicious restore archives, accidental disclosure, low-privileged local users, interrupted privileged operations, and tampering with distributed artifacts.
 
 It cannot protect a server after the VPS provider, kernel, root account, trusted release signing identity, or an already-running privileged `vpnctl` binary has been compromised. Traffic-analysis resistance, anonymity guarantees, and security of third-party client applications are outside this project's direct control.
-

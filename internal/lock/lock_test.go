@@ -1,26 +1,40 @@
 package lock
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-func TestAcquireRecoversOldLockDirectoryWithoutMetadata(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "vpnctl.lock")
-	if err := os.Mkdir(path, 0700); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
-	guard, err := Acquire(path, "test")
+func TestAcquireSerializesAndReleases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime", "lock")
+	first, err := Acquire(path, "first")
 	if err != nil {
-		t.Fatalf("old incomplete lock permanently blocks recovery: %v", err)
+		t.Fatal(err)
+	}
+	if _, err := Acquire(path, "second"); err == nil {
+		t.Fatal("concurrent mutation acquired the lock")
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Acquire(path, "second")
+	if err != nil {
+		t.Fatalf("lock was not released: %v", err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReleaseCannotRunTwice(t *testing.T) {
+	guard, err := Acquire(filepath.Join(t.TempDir(), "runtime", "lock"), "test")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := guard.Release(); err != nil {
 		t.Fatal(err)
+	}
+	if err := guard.Release(); err == nil {
+		t.Fatal("second release succeeded")
 	}
 }
