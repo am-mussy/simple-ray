@@ -40,7 +40,7 @@ func TestConfirmDefaultsAndRetries(t *testing.T) {
 	if !confirmed {
 		t.Fatal("expected confirmation")
 	}
-	if !strings.Contains(output.String(), "Enter y or n") {
+	if !strings.Contains(output.String(), "Введи y или n") {
 		t.Fatalf("retry hint is missing: %q", output.String())
 	}
 }

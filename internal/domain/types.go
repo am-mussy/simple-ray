@@ -76,7 +76,7 @@ type Check struct {
 func ValidateUserName(value string) (string, error) {
 	name := strings.TrimSpace(value)
 	if !userNamePattern.MatchString(name) {
-		return "", fmt.Errorf("name must contain 1-32 letters, numbers, underscores, or hyphens")
+		return "", fmt.Errorf("имя должно содержать 1–32 латинские буквы, цифры, подчёркивания или дефисы")
 	}
 	return name, nil
 }

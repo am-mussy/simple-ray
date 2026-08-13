@@ -95,7 +95,7 @@ func (p *LinePrompter) Confirm(label string, defaultValue bool) (bool, error) {
 		case "n", "no":
 			return false, nil
 		default:
-			if _, err := io.WriteString(p.writer, "! Enter y or n.\n"); err != nil {
+			if _, err := io.WriteString(p.writer, "! Введи y или n.\n"); err != nil {
 				return false, err
 			}
 		}
@@ -109,10 +109,10 @@ func (p *LinePrompter) Select(label string, choices []Choice, defaultIndex int) 
 		return 0, ErrNonInteractive
 	}
 	if len(choices) == 0 {
-		return 0, errors.New("at least one choice is required")
+		return 0, errors.New("нужен хотя бы один вариант")
 	}
 	if defaultIndex < 0 || defaultIndex >= len(choices) {
-		return 0, errors.New("default choice is out of range")
+		return 0, errors.New("вариант по умолчанию вне допустимого диапазона")
 	}
 	if _, err := fmt.Fprintln(p.writer, safeText(label)); err != nil {
 		return 0, err
@@ -131,7 +131,7 @@ func (p *LinePrompter) Select(label string, choices []Choice, defaultIndex int) 
 		}
 	}
 	for {
-		value, err := p.readLine(fmt.Sprintf("Choose [%d]: ", defaultIndex+1))
+		value, err := p.readLine(fmt.Sprintf("Выбери [%d]: ", defaultIndex+1))
 		if err != nil {
 			return 0, err
 		}
@@ -143,7 +143,7 @@ func (p *LinePrompter) Select(label string, choices []Choice, defaultIndex int) 
 		if conversionErr == nil && index >= 1 && index <= len(choices) {
 			return index - 1, nil
 		}
-		if _, err := fmt.Fprintf(p.writer, "! Enter a number from 1 to %d.\n", len(choices)); err != nil {
+		if _, err := fmt.Fprintf(p.writer, "! Введи число от 1 до %d.\n", len(choices)); err != nil {
 			return 0, err
 		}
 	}

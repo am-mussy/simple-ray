@@ -43,7 +43,7 @@ func TestStatusReturnsDegradedExitCodeWhenXrayIsStopped(t *testing.T) {
 	if exit := command.Run(context.Background(), []string{"status"}); exit != 5 {
 		t.Fatalf("exit = %d, want 5; stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("3x-ui is not healthy")) {
+	if !bytes.Contains(stderr.Bytes(), []byte("3x-ui работает некорректно")) {
 		t.Fatalf("degraded status is missing: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }

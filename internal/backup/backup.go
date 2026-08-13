@@ -208,7 +208,7 @@ func Create(ctx context.Context, api DatabaseAPI, installation domain.State, sec
 	if err := directory.Close(); err != nil {
 		return Result{}, err
 	}
-	return Result{Path: destination, Size: stat.Size(), SHA256: hex.EncodeToString(hasher.Sum(nil)), Format: FormatVersion, Warning: "backup is plaintext and contains secrets"}, nil
+	return Result{Path: destination, Size: stat.Size(), SHA256: hex.EncodeToString(hasher.Sum(nil)), Format: FormatVersion, Warning: "копия не зашифрована и содержит секреты"}, nil
 }
 
 func Read(source string) (Bundle, error) {

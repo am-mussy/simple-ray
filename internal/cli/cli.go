@@ -55,21 +55,23 @@ type errorDetail struct {
 
 type silentExit int
 
-func (e silentExit) Error() string { return "command completed with a non-zero result" }
+func (e silentExit) Error() string {
+	return "команда завершилась с ненулевым кодом"
+}
 
 func (c *CLI) Run(ctx context.Context, args []string) int {
 	opts, commandArgs, err := parseGlobals(args)
 	if err != nil {
-		return c.fail(Options{}, domain.E("INVALID_ARGUMENT", err.Error(), "Run vpnctl help", 2, err))
+		return c.fail(Options{}, domain.E("INVALID_ARGUMENT", err.Error(), "Запусти vpnctl help", 2, err))
 	}
 	if opts.Output == "json" && opts.Color == "always" {
-		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--color always cannot be used with JSON output", "Use --color never", 2, nil))
+		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--color always нельзя использовать с JSON", "Используй --color never", 2, nil))
 	}
 	if opts.Quiet && opts.Verbose {
-		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--quiet and --verbose are mutually exclusive", "Choose one diagnostic mode", 2, nil))
+		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--quiet и --verbose нельзя использовать вместе", "Выбери один режим диагностики", 2, nil))
 	}
 	if opts.Interactive && opts.NonInteractive {
-		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--interactive and --non-interactive are mutually exclusive", "Choose one mode", 2, nil))
+		return c.fail(opts, domain.E("INVALID_ARGUMENT", "--interactive и --non-interactive нельзя использовать вместе", "Выбери один режим", 2, nil))
 	}
 	if len(commandArgs) == 0 || commandArgs[0] == "help" || commandArgs[0] == "--help" {
 		fmt.Fprint(c.Out, helpText)
@@ -94,11 +96,11 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	case "install":
 		runErr = c.install(ctx, opts, commandArgs[1:])
 	case "update":
-		runErr = domain.E("UPDATE_UNAVAILABLE", "safe updates are not enabled in this development build", "Use a verified release after rollback validation", 3, nil)
+		runErr = domain.E("UPDATE_UNAVAILABLE", "безопасное обновление пока недоступно", "Используй проверенный релиз после реализации отката", 3, nil)
 	case "uninstall":
 		runErr = c.uninstall(ctx, opts, commandArgs[1:])
 	default:
-		runErr = domain.E("UNKNOWN_COMMAND", fmt.Sprintf("unknown command %q", commandArgs[0]), "Run vpnctl help", 2, nil)
+		runErr = domain.E("UNKNOWN_COMMAND", fmt.Sprintf("неизвестная команда %q", commandArgs[0]), "Запусти vpnctl help", 2, nil)
 	}
 	if runErr != nil {
 		return c.fail(opts, runErr)
@@ -108,24 +110,24 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 
 func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("install")
-	user := set.String("user", "", "first VPN user")
-	serverName := set.String("server-name", "", "server display name")
-	publicAddress := set.String("public-address", "", "public IP address")
-	listenPort := set.Int("listen-port", 443, "VLESS port")
-	sshPort := set.Int("ssh-port", 0, "SSH listener port")
-	realitySNI := set.String("reality-server-name", "www.microsoft.com", "Reality server name")
-	realityTarget := set.String("reality-destination", "www.microsoft.com:443", "Reality target")
-	mode := set.String("mode", "recommended", "setup mode")
-	panelAccess := set.String("panel-access", "local", "panel access")
+	user := set.String("user", "", "имя первого VPN-пользователя")
+	serverName := set.String("server-name", "", "название сервера")
+	publicAddress := set.String("public-address", "", "публичный IP-адрес")
+	listenPort := set.Int("listen-port", 443, "порт VLESS")
+	sshPort := set.Int("ssh-port", 0, "порт SSH")
+	realitySNI := set.String("reality-server-name", "www.microsoft.com", "домен Reality")
+	realityTarget := set.String("reality-destination", "www.microsoft.com:443", "назначение Reality")
+	mode := set.String("mode", "recommended", "режим установки")
+	panelAccess := set.String("panel-access", "local", "доступ к панели")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 0 {
-		return usage("invalid install arguments")
+		return usage("некорректные аргументы установки")
 	}
 	if *mode != "recommended" && *mode != "advanced" {
-		return usage("mode must be recommended or advanced")
+		return usage("режим должен быть recommended или advanced")
 	}
 	if *panelAccess != "local" {
-		return domain.E("UNSAFE_PANEL_EXPOSURE", "only a loopback panel is supported", "Use --panel-access local", 3, nil)
+		return domain.E("UNSAFE_PANEL_EXPOSURE", "поддерживается только локальная панель", "Используй --panel-access local", 3, nil)
 	}
 	interactive := opts.Interactive || c.IsTTY && !opts.NonInteractive
 	if interactive {
@@ -134,13 +136,13 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 		}
 	}
 	if *user == "" {
-		return usage("--user is required")
+		return usage("обязателен флаг --user")
 	}
 	if *publicAddress == "" {
 		*publicAddress = c.detectPublicAddress(ctx)
 	}
 	if *publicAddress == "" {
-		return domain.E("PUBLIC_ADDRESS_REQUIRED", "public address could not be detected from SSH", "Pass --public-address <IP>", 3, nil)
+		return domain.E("PUBLIC_ADDRESS_REQUIRED", "не удалось определить публичный IP-адрес", "Передай --public-address <IP>", 3, nil)
 	}
 	result, err := c.Service.Install(ctx, installer.Request{User: *user, ServerName: *serverName, PublicAddress: *publicAddress, ListenPort: *listenPort, SSHPort: *sshPort, RealitySNI: *realitySNI, RealityTarget: *realityTarget})
 	if err != nil {
@@ -150,10 +152,10 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 		return writeJSON(c.Out, map[string]any{"ok": true, "existing": result.Existing, "address": result.State.PublicAddress, "user": result.User.Name})
 	}
 	if result.Existing {
-		fmt.Fprintln(c.Out, "Existing installation is healthy. Nothing to change.")
+		fmt.Fprintln(c.Out, "Установка уже существует и работает. Изменения не требуются.")
 		return nil
 	}
-	fmt.Fprintf(c.Out, "Installation complete.\nAddress: %s\nProtocol: VLESS TCP Reality\nUser: %s\nShow the client configuration with: sudo vpnctl qr %s\n", result.State.PublicAddress, result.User.Name, result.User.Name)
+	fmt.Fprintf(c.Out, "Установка завершена.\nАдрес: %s\nПротокол: VLESS TCP Reality\nПользователь: %s\nПоказать конфигурацию клиента: sudo vpnctl qr %s\n", result.State.PublicAddress, result.User.Name, result.User.Name)
 	if interactive {
 		return c.showUser(ctx, opts, result.User.Name, true)
 	}
@@ -162,18 +164,18 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 
 func (c *CLI) installWizard(ctx context.Context, user, serverName, publicAddress *string, listenPort, sshPort *int, realitySNI, realityTarget, mode *string, confirmed bool) error {
 	if c.In == nil {
-		return domain.E("TTY_REQUIRED", "interactive input is unavailable", "Use --non-interactive with required flags", 3, nil)
+		return domain.E("TTY_REQUIRED", "интерактивный ввод недоступен", "Используй --non-interactive и передай обязательные флаги", 3, nil)
 	}
 	renderer, err := ui.NewRenderer(c.Err, ui.Options{Terminal: ui.TerminalAlways, Color: ui.ColorMode("auto"), Unicode: ui.UnicodeMode("auto")})
 	if err != nil {
 		return err
 	}
 	defer renderer.Close()
-	renderer.Banner("VPNCTL", "Secure server setup")
+	renderer.Banner("VPNCTL", "Безопасная настройка сервера")
 	prompter := ui.NewPrompter(c.In, c.Err, true)
-	selected, err := prompter.Select("Choose setup", []ui.Choice{{Label: "Recommended", Description: "automatic secure defaults"}, {Label: "Advanced", Description: "network settings"}}, 0)
+	selected, err := prompter.Select("Выбери режим установки", []ui.Choice{{Label: "Рекомендуемый", Description: "безопасные автоматические настройки"}, {Label: "Расширенный", Description: "ручные сетевые настройки"}}, 0)
 	if err != nil {
-		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "Run vpnctl install again", 130, err)
+		return domain.E("INSTALL_CANCELLED", "установка отменена", "Запусти vpnctl install ещё раз", 130, err)
 	}
 	if selected == 1 {
 		*mode = "advanced"
@@ -187,49 +189,49 @@ func (c *CLI) installWizard(ctx context.Context, user, serverName, publicAddress
 	}
 	validateName := func(value string) error { _, err := domain.ValidateUserName(value); return err }
 	if *mode == "recommended" {
-		*user, err = prompter.Input("Create your first VPN user", "vpn", validateName)
+		*user, err = prompter.Input("Имя первого VPN-пользователя", "vpn", validateName)
 		if err == nil && *publicAddress == "" {
-			*publicAddress, err = prompter.Input("Public IP", "", validateIP)
+			*publicAddress, err = prompter.Input("Публичный IP", "", validateIP)
 		}
 	} else {
-		*serverName, err = prompter.Input("Server name", *serverName, requireText)
+		*serverName, err = prompter.Input("Название сервера", *serverName, requireText)
 		if err == nil {
-			*user, err = prompter.Input("Create your first VPN user", "vpn", validateName)
+			*user, err = prompter.Input("Имя первого VPN-пользователя", "vpn", validateName)
 		}
 		if err == nil {
-			*publicAddress, err = prompter.Input("Public IP", *publicAddress, validateIP)
+			*publicAddress, err = prompter.Input("Публичный IP", *publicAddress, validateIP)
 		}
 		if err == nil {
 			value := strconv.Itoa(*listenPort)
-			value, err = prompter.Input("VLESS port", value, validatePort)
+			value, err = prompter.Input("Порт VLESS", value, validatePort)
 			if err == nil {
 				*listenPort, _ = strconv.Atoi(value)
 			}
 		}
 		if err == nil {
-			*realitySNI, err = prompter.Input("Reality server name", *realitySNI, requireText)
+			*realitySNI, err = prompter.Input("Домен Reality", *realitySNI, requireText)
 		}
 		if err == nil {
-			*realityTarget, err = prompter.Input("Reality destination", *realityTarget, requireText)
+			*realityTarget, err = prompter.Input("Назначение Reality", *realityTarget, requireText)
 		}
 		if err == nil && *sshPort == 0 {
 			*sshPort = sshPortFromConnection()
 		}
 	}
 	if err != nil {
-		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "Run vpnctl install again", 130, err)
+		return domain.E("INSTALL_CANCELLED", "установка отменена", "Запусти vpnctl install ещё раз", 130, err)
 	}
 	if *publicAddress == "" {
-		return domain.E("PUBLIC_ADDRESS_REQUIRED", "public address could not be detected from SSH", "Use Advanced or pass --public-address <IP>", 3, nil)
+		return domain.E("PUBLIC_ADDRESS_REQUIRED", "не удалось определить публичный IP-адрес", "Выбери расширенный режим или передай --public-address <IP>", 3, nil)
 	}
-	renderer.Section("Ready to install")
-	renderer.Table([]ui.Column{{Title: "SETTING", MinWidth: 12}, {Title: "VALUE", MinWidth: 20}}, [][]string{{"Server", *serverName}, {"VPN user", *user}, {"Address", *publicAddress}, {"Protocol", "VLESS TCP Reality"}, {"VPN port", strconv.Itoa(*listenPort)}, {"Admin panel", "Local only"}})
+	renderer.Section("Всё готово к установке")
+	renderer.Table([]ui.Column{{Title: "ПАРАМЕТР", MinWidth: 12}, {Title: "ЗНАЧЕНИЕ", MinWidth: 20}}, [][]string{{"Сервер", *serverName}, {"VPN-пользователь", *user}, {"Адрес", *publicAddress}, {"Протокол", "VLESS TCP Reality"}, {"Порт VPN", strconv.Itoa(*listenPort)}, {"Панель управления", "Только локально"}})
 	if confirmed {
 		return nil
 	}
-	ok, err := prompter.Confirm("Install now?", true)
+	ok, err := prompter.Confirm("Начать установку?", true)
 	if err != nil || !ok {
-		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "No system changes were made", 130, err)
+		return domain.E("INSTALL_CANCELLED", "установка отменена", "Система не была изменена", 130, err)
 	}
 	return nil
 }
@@ -313,14 +315,14 @@ func sshPortFromConnection() int {
 
 func requireText(value string) error {
 	if strings.TrimSpace(value) == "" {
-		return errors.New("value is required")
+		return errors.New("значение обязательно")
 	}
 	return nil
 }
 
 func validateIP(value string) error {
 	if net.ParseIP(value) == nil {
-		return errors.New("enter a valid IP address")
+		return errors.New("введи корректный IP-адрес")
 	}
 	return nil
 }
@@ -328,26 +330,26 @@ func validateIP(value string) error {
 func validatePort(value string) error {
 	port, err := strconv.Atoi(value)
 	if err != nil || port < 1 || port > 65535 {
-		return errors.New("enter a port from 1 to 65535")
+		return errors.New("введи порт от 1 до 65535")
 	}
 	return nil
 }
 
 func (c *CLI) uninstall(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("uninstall")
-	keepData := set.Bool("keep-data", false, "keep 3x-ui configuration")
-	removeBackups := set.Bool("remove-backups", false, "remove backups")
+	keepData := set.Bool("keep-data", false, "сохранить конфигурацию 3x-ui")
+	removeBackups := set.Bool("remove-backups", false, "удалить резервные копии")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 0 {
-		return usage("usage: vpnctl uninstall [--keep-data] --yes")
+		return usage("использование: vpnctl uninstall [--keep-data] --yes")
 	}
 	if !opts.Yes {
-		return domain.E("CONFIRMATION_REQUIRED", "uninstall requires confirmation", "Retry with --yes", 3, nil)
+		return domain.E("CONFIRMATION_REQUIRED", "удаление требует подтверждения", "Повтори команду с --yes", 3, nil)
 	}
 	if err := c.Service.Uninstall(ctx, *keepData, *removeBackups); err != nil {
 		return err
 	}
-	return c.result(opts, map[string]any{"ok": true, "uninstalled": true, "dataKept": *keepData, "binaryRetained": true}, "The managed VPN service was uninstalled. The vpnctl binary was retained.\n")
+	return c.result(opts, map[string]any{"ok": true, "uninstalled": true, "dataKept": *keepData, "binaryRetained": true}, "VPN-сервис удалён. Исполняемый файл vpnctl сохранён.\n")
 }
 
 func (c *CLI) version(opts Options) error {
@@ -360,7 +362,7 @@ func (c *CLI) version(opts Options) error {
 
 func (c *CLI) status(ctx context.Context, opts Options, args []string) error {
 	if len(args) != 0 {
-		return usage("status accepts no arguments")
+		return usage("команда status не принимает аргументы")
 	}
 	state, server, users, err := c.Service.Status(ctx)
 	if err != nil {
@@ -379,7 +381,11 @@ func (c *CLI) status(ctx context.Context, opts Options, args []string) error {
 		}
 		return nil
 	}
-	fmt.Fprintf(c.Out, "Server\n------\nStatus       %s\nAddress      %s\nProtocol     VLESS TCP Reality\nUsers        %d\nXray         %s\n3x-ui        running (local only)\nVersion      vpnctl %s\n", strings.ToUpper(status), state.PublicAddress, len(users), server.Xray.State, domain.ProductVersion)
+	statusText := "РАБОТАЕТ"
+	if status == "degraded" {
+		statusText = "ЕСТЬ ПРОБЛЕМЫ"
+	}
+	fmt.Fprintf(c.Out, "Сервер\n------\nСтатус       %s\nАдрес        %s\nПротокол     VLESS TCP Reality\nПользователи %d\nXray         %s\n3x-ui        работает (только локально)\nВерсия       vpnctl %s\n", statusText, state.PublicAddress, len(users), server.Xray.State, domain.ProductVersion)
 	if !server.XrayRunning() {
 		return silentExit(5)
 	}
@@ -388,18 +394,18 @@ func (c *CLI) status(ctx context.Context, opts Options, args []string) error {
 
 func (c *CLI) user(ctx context.Context, opts Options, args []string) error {
 	if len(args) == 0 {
-		return usage("user subcommand is required")
+		return usage("нужна подкоманда user")
 	}
 	switch args[0] {
 	case "add":
 		set := newFlagSet("user add")
-		show := set.Bool("show", false, "show client configuration")
+		show := set.Bool("show", false, "показать конфигурацию клиента")
 		positionals, err := parseSet(set, args[1:])
 		if err != nil || len(positionals) != 1 {
-			return usage("usage: vpnctl user add <name> [--show]")
+			return usage("использование: vpnctl user add <имя> [--show]")
 		}
 		if *show && opts.Output == "json" {
-			return usage("--show cannot be used with JSON; use user show")
+			return usage("--show нельзя использовать с JSON; используй user show")
 		}
 		user, created, err := c.Service.AddUser(ctx, positionals[0])
 		if err != nil {
@@ -409,30 +415,30 @@ func (c *CLI) user(ctx context.Context, opts Options, args []string) error {
 			return writeJSON(c.Out, map[string]any{"ok": true, "user": user, "created": created})
 		}
 		if !created {
-			fmt.Fprintf(c.Out, "User %q already exists. No changes made.\n", user.Name)
+			fmt.Fprintf(c.Out, "Пользователь %q уже существует. Изменений нет.\n", user.Name)
 		} else {
-			fmt.Fprintf(c.Out, "User %q created.\n", user.Name)
+			fmt.Fprintf(c.Out, "Пользователь %q создан.\n", user.Name)
 		}
 		if *show || (c.IsTTY && !opts.NonInteractive) {
 			return c.showUser(ctx, opts, user.Name, true)
 		}
-		fmt.Fprintf(c.Out, "Show the client configuration with: sudo vpnctl qr %s\n", user.Name)
+		fmt.Fprintf(c.Out, "Показать конфигурацию клиента: sudo vpnctl qr %s\n", user.Name)
 		return nil
 	case "remove":
 		if len(args) != 2 {
-			return usage("usage: vpnctl user remove <name> --yes")
+			return usage("использование: vpnctl user remove <имя> --yes")
 		}
 		if !opts.Yes {
-			return domain.E("CONFIRMATION_REQUIRED", fmt.Sprintf("removing VPN user %q requires confirmation", args[1]), "Retry with --yes", 3, nil)
+			return domain.E("CONFIRMATION_REQUIRED", fmt.Sprintf("удаление VPN-пользователя %q требует подтверждения", args[1]), "Повтори команду с --yes", 3, nil)
 		}
 		remaining, err := c.Service.RemoveUser(ctx, args[1])
 		if err != nil {
 			return err
 		}
-		return c.result(opts, map[string]any{"ok": true, "removed": args[1], "remaining": remaining}, fmt.Sprintf("User %q removed. %d users remain.\n", args[1], remaining))
+		return c.result(opts, map[string]any{"ok": true, "removed": args[1], "remaining": remaining}, fmt.Sprintf("Пользователь %q удалён. Осталось пользователей: %d.\n", args[1], remaining))
 	case "list":
 		if len(args) != 1 {
-			return usage("user list accepts no arguments")
+			return usage("команда user list не принимает аргументы")
 		}
 		users, err := c.Service.ListUsers(ctx)
 		if err != nil {
@@ -442,21 +448,21 @@ func (c *CLI) user(ctx context.Context, opts Options, args []string) error {
 			return writeJSON(c.Out, map[string]any{"ok": true, "users": users})
 		}
 		if len(users) == 0 {
-			fmt.Fprintln(c.Out, "No VPN users. Add one with: sudo vpnctl user add <name>")
+			fmt.Fprintln(c.Out, "VPN-пользователей нет. Добавить: sudo vpnctl user add <имя>")
 			return nil
 		}
-		fmt.Fprintf(c.Out, "VPN users (%d)\n\nNAME                              STATUS\n", len(users))
+		fmt.Fprintf(c.Out, "VPN-пользователи (%d)\n\nИМЯ                               СТАТУС\n", len(users))
 		for _, user := range users {
 			fmt.Fprintf(c.Out, "%-32s  %s\n", user.Name, enabledState(user.Enabled))
 		}
 		return nil
 	case "show":
 		if len(args) != 2 {
-			return usage("usage: vpnctl user show <name>")
+			return usage("использование: vpnctl user show <имя>")
 		}
 		return c.showUser(ctx, opts, args[1], c.IsTTY)
 	default:
-		return usage(fmt.Sprintf("unknown user subcommand %q", args[0]))
+		return usage(fmt.Sprintf("неизвестная подкоманда user %q", args[0]))
 	}
 }
 
@@ -472,17 +478,17 @@ func (c *CLI) showUser(ctx context.Context, opts Options, name string, decorated
 		fmt.Fprintln(c.Out, link)
 		return nil
 	}
-	fmt.Fprintf(c.Out, "Client: %s\n\n%s\n\n%s\n", user.Name, terminalQR(link), link)
+	fmt.Fprintf(c.Out, "Клиент: %s\n\n%s\n\n%s\n", user.Name, terminalQR(link), link)
 	return nil
 }
 
 func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("qr")
-	format := set.String("format", "", "terminal or uri")
-	compact := set.Bool("compact", false, "compact terminal QR")
+	format := set.String("format", "", "terminal или uri")
+	compact := set.Bool("compact", false, "компактный QR-код в терминале")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 1 {
-		return usage("usage: vpnctl qr <name> [--format terminal|uri] [--compact]")
+		return usage("использование: vpnctl qr <имя> [--format terminal|uri] [--compact]")
 	}
 	if *format == "" {
 		if c.IsTTY {
@@ -492,10 +498,10 @@ func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 		}
 	}
 	if *format != "terminal" && *format != "uri" {
-		return usage("QR format must be terminal or uri")
+		return usage("формат QR должен быть terminal или uri")
 	}
 	if *format == "terminal" && !c.IsTTY {
-		return domain.E("TTY_REQUIRED", "terminal QR output requires a terminal", "Use --format uri", 3, nil)
+		return domain.E("TTY_REQUIRED", "для вывода QR нужен терминал", "Используй --format uri", 3, nil)
 	}
 	_, link, err := c.Service.UserLink(ctx, positionals[0])
 	if err != nil {
@@ -513,7 +519,7 @@ func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 
 func (c *CLI) doctor(ctx context.Context, opts Options, args []string) error {
 	if len(args) != 0 {
-		return usage("doctor repair is not available in this build")
+		return usage("автоматическое исправление doctor пока недоступно")
 	}
 	checks := c.Service.Doctor(ctx)
 	failed := 0
@@ -527,7 +533,7 @@ func (c *CLI) doctor(ctx context.Context, opts Options, args []string) error {
 			return err
 		}
 	} else {
-		fmt.Fprintln(c.Out, "VPNCTL Doctor")
+		fmt.Fprintln(c.Out, "Диагностика VPNCTL")
 		group := ""
 		for _, check := range checks {
 			if check.Group != group {
@@ -536,7 +542,7 @@ func (c *CLI) doctor(ctx context.Context, opts Options, args []string) error {
 			}
 			fmt.Fprintf(c.Out, "  %s %s\n", checkMark(check.Status), check.Name)
 		}
-		fmt.Fprintf(c.Out, "\nResult\n  %d passed, %d failed\n", len(checks)-failed, failed)
+		fmt.Fprintf(c.Out, "\nРезультат\n  успешно: %d, ошибок: %d\n", len(checks)-failed, failed)
 	}
 	if failed > 0 {
 		return silentExit(5)
@@ -546,27 +552,27 @@ func (c *CLI) doctor(ctx context.Context, opts Options, args []string) error {
 
 func (c *CLI) backup(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("backup")
-	file := set.String("file", "", "destination")
-	plaintext := set.Bool("plaintext", false, "acknowledge unencrypted secrets")
+	file := set.String("file", "", "путь к файлу")
+	plaintext := set.Bool("plaintext", false, "подтвердить сохранение секретов без шифрования")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 0 {
-		return usage("usage: vpnctl backup [--file path] --plaintext")
+		return usage("использование: vpnctl backup [--file путь] --plaintext")
 	}
 	result, err := c.Service.Backup(ctx, *file, *plaintext)
 	if err != nil {
 		return err
 	}
-	return c.result(opts, map[string]any{"ok": true, "backup": result}, fmt.Sprintf("Backup created: %s\nSize: %d bytes\nSHA-256: %s\nWarning: %s\n", result.Path, result.Size, result.SHA256, result.Warning))
+	return c.result(opts, map[string]any{"ok": true, "backup": result}, fmt.Sprintf("Резервная копия создана: %s\nРазмер: %d байт\nSHA-256: %s\nПредупреждение: %s\n", result.Path, result.Size, result.SHA256, result.Warning))
 }
 
 func (c *CLI) restore(_ context.Context, opts Options, args []string) error {
 	if len(args) != 1 {
-		return usage("usage: vpnctl restore <backup> --yes")
+		return usage("использование: vpnctl restore <копия> --yes")
 	}
 	if !opts.Yes {
-		return domain.E("CONFIRMATION_REQUIRED", "restore requires confirmation", "Retry with --yes after reviewing the backup", 3, nil)
+		return domain.E("CONFIRMATION_REQUIRED", "восстановление требует подтверждения", "Проверь копию и повтори команду с --yes", 3, nil)
 	}
-	return domain.E("RESTORE_UNAVAILABLE", "restore is disabled because an offline rollback transaction is not implemented", "Keep the backup and restore it manually with a reviewed recovery procedure", 3, nil)
+	return domain.E("RESTORE_UNAVAILABLE", "восстановление отключено: безопасный автономный откат ещё не реализован", "Сохрани копию и используй проверенную ручную процедуру восстановления", 3, nil)
 }
 
 func (c *CLI) result(opts Options, data any, human string) error {
@@ -582,7 +588,7 @@ func (c *CLI) fail(opts Options, err error) int {
 	if errors.As(err, &silent) {
 		return int(silent)
 	}
-	detail := errorDetail{Code: "OPERATION_FAILED", Message: "operation failed"}
+	detail := errorDetail{Code: "OPERATION_FAILED", Message: "операция завершилась ошибкой"}
 	exit := 1
 	var domainError *domain.Error
 	if errors.As(err, &domainError) {
@@ -594,11 +600,11 @@ func (c *CLI) fail(opts Options, err error) int {
 	if opts.Output == "json" {
 		_ = writeJSON(c.Out, errorResult{OK: false, Error: detail})
 	} else {
-		fmt.Fprintf(c.Err, "ERROR: %s\n", detail.Message)
+		fmt.Fprintf(c.Err, "ОШИБКА: %s\n", detail.Message)
 		if detail.Hint != "" {
-			fmt.Fprintf(c.Err, "Suggested action: %s\n", detail.Hint)
+			fmt.Fprintf(c.Err, "Что делать: %s\n", detail.Hint)
 		}
-		fmt.Fprintf(c.Err, "Error code: %s\n", detail.Code)
+		fmt.Fprintf(c.Err, "Код ошибки: %s\n", detail.Code)
 	}
 	return exit
 }
@@ -611,7 +617,7 @@ func parseGlobals(args []string) (Options, []string, error) {
 		arg := args[i]
 		take := func() (string, error) {
 			if i+1 >= len(args) {
-				return "", fmt.Errorf("%s requires a value", arg)
+				return "", fmt.Errorf("для %s нужно значение", arg)
 			}
 			i++
 			return args[i], nil
@@ -644,13 +650,13 @@ func parseGlobals(args []string) (Options, []string, error) {
 		}
 	}
 	if opts.Output != "human" && opts.Output != "json" {
-		return opts, nil, errors.New("output must be human or json")
+		return opts, nil, errors.New("output должен быть human или json")
 	}
 	if opts.Color != "auto" && opts.Color != "always" && opts.Color != "never" {
-		return opts, nil, errors.New("color must be auto, always, or never")
+		return opts, nil, errors.New("color должен быть auto, always или never")
 	}
 	if opts.LogFormat != "text" && opts.LogFormat != "json" {
-		return opts, nil, errors.New("log format must be text or json")
+		return opts, nil, errors.New("log-format должен быть text или json")
 	}
 	return opts, rest, nil
 }
@@ -669,7 +675,7 @@ func parseSet(set *flag.FlagSet, args []string) ([]string, error) {
 			name := strings.TrimPrefix(args[i], "--")
 			if f := set.Lookup(name); f != nil && f.DefValue != "false" && !strings.Contains(args[i], "=") {
 				if i+1 >= len(args) {
-					return nil, fmt.Errorf("flag %s requires a value", args[i])
+					return nil, fmt.Errorf("для флага %s нужно значение", args[i])
 				}
 				i++
 				flags = append(flags, args[i])
@@ -690,7 +696,7 @@ func terminalQRCompact(value string) string { return renderQR(value, true) }
 func renderQR(value string, compact bool) string {
 	code, err := qrcode.New(value, qrcode.Medium)
 	if err != nil {
-		return "[QR unavailable]"
+		return "[QR недоступен]"
 	}
 	bitmap := code.Bitmap()
 	border := 2
@@ -734,13 +740,13 @@ func writeJSON(w io.Writer, value any) error {
 	return encoder.Encode(value)
 }
 func usage(message string) error {
-	return domain.E("INVALID_ARGUMENT", message, "Run vpnctl help", 2, nil)
+	return domain.E("INVALID_ARGUMENT", message, "Запусти vpnctl help", 2, nil)
 }
 func enabledState(value bool) string {
 	if value {
-		return "active"
+		return "активен"
 	}
-	return "disabled"
+	return "отключён"
 }
 func checkMark(status string) string {
 	if status == "passed" {
@@ -752,9 +758,9 @@ func checkMark(status string) string {
 	return "ERROR"
 }
 
-const helpText = `vpnctl manages a VLESS TCP Reality server.
+const helpText = `vpnctl управляет VPN-сервером VLESS TCP Reality.
 
-Usage:
+Использование:
   vpnctl install
   vpnctl status
   vpnctl user add|remove|list|show
@@ -765,7 +771,7 @@ Usage:
   vpnctl update
   vpnctl uninstall
 
-Global flags:
+Общие флаги:
   --output human|json
   --color auto|always|never
   --log-format text|json
