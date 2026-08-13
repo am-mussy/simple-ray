@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -43,12 +44,15 @@ type Preflight struct {
 }
 
 type Installer struct {
-	StatePath  string
-	ProgramDir string
-	ConfigDir  string
-	HTTP       *http.Client
-	EUID       func() int
-	GOARCH     string
+	OSReleasePath string
+	MemInfoPath   string
+	StatePath     string
+	ProgramDir    string
+	ConfigDir     string
+	ServiceUnit   string
+	HTTP          *http.Client
+	EUID          func() int
+	GOARCH        string
 }
 
 func New() *Installer {
@@ -66,7 +70,7 @@ func New() *Installer {
 		}
 		return nil
 	}
-	return &Installer{StatePath: "/var/lib/vpnctl/state.json", ProgramDir: "/usr/local/x-ui", ConfigDir: "/etc/x-ui", HTTP: client, EUID: os.Geteuid, GOARCH: runtime.GOARCH}
+	return &Installer{OSReleasePath: "/etc/os-release", MemInfoPath: "/proc/meminfo", StatePath: "/var/lib/vpnctl/state.json", ProgramDir: "/usr/local/x-ui", ConfigDir: "/etc/x-ui", ServiceUnit: "/etc/systemd/system/x-ui.service", HTTP: client, EUID: os.Geteuid, GOARCH: runtime.GOARCH}
 }
 
 func (i *Installer) Check() (Preflight, error) {
@@ -74,19 +78,19 @@ func (i *Installer) Check() (Preflight, error) {
 	if i.EUID == nil || i.EUID() != 0 {
 		return result, errors.New("installation requires root")
 	}
-	osRelease, err := os.ReadFile("/etc/os-release")
+	osRelease, err := os.ReadFile(i.OSReleasePath)
 	if err != nil {
 		return result, fmt.Errorf("read operating system release: %w", err)
 	}
 	values := parseOSRelease(string(osRelease))
-	if values["ID"] != "ubuntu" || (values["VERSION_ID"] != "22.04" && values["VERSION_ID"] != "24.04") {
+	if values["ID"] != "ubuntu" || !supportedUbuntuVersion(values["VERSION_ID"]) {
 		return result, fmt.Errorf("unsupported operating system %s %s", values["ID"], values["VERSION_ID"])
 	}
 	architecture := normalizeArchitecture(i.GOARCH)
 	if architecture == "" {
 		return result, fmt.Errorf("unsupported architecture %s", i.GOARCH)
 	}
-	memory, err := memoryBytes("/proc/meminfo")
+	memory, err := memoryBytes(i.MemInfoPath)
 	if err != nil {
 		return result, err
 	}
@@ -99,7 +103,7 @@ func (i *Installer) Check() (Preflight, error) {
 		return result, stateErr
 	}
 	if !result.StateExists {
-		for _, path := range []string{i.ProgramDir, i.ConfigDir} {
+		for _, path := range []string{i.ProgramDir, i.ConfigDir, i.ServiceUnit} {
 			if _, err := os.Lstat(path); err == nil {
 				return result, fmt.Errorf("unmanaged existing installation found at %s", path)
 			} else if !errors.Is(err, os.ErrNotExist) {
@@ -109,6 +113,15 @@ func (i *Installer) Check() (Preflight, error) {
 	}
 	result.OSVersion, result.Architecture, result.MemoryBytes = values["VERSION_ID"], architecture, memory
 	return result, nil
+}
+
+func supportedUbuntuVersion(version string) bool {
+	switch version {
+	case "22.04", "24.04", "26.04":
+		return true
+	default:
+		return false
+	}
 }
 
 func (i *Installer) DownloadAndStage(ctx context.Context, architecture, parent string) (string, error) {
@@ -153,6 +166,43 @@ func (i *Installer) DownloadAndStage(ctx context.Context, architecture, parent s
 	}
 	keep = true
 	return root, nil
+}
+
+func (i *Installer) DownloadAndStageOwned(ctx context.Context, architecture, parent, installID string) (string, string, error) {
+	if !regexp.MustCompile(`^[a-f0-9]{16}$`).MatchString(installID) {
+		return "", "", errors.New("invalid install identifier")
+	}
+	artifact, ok := artifacts[architecture]
+	if !ok {
+		return "", "", errors.New("unsupported artifact architecture")
+	}
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
+		return "", "", errors.New("staging parent must be an existing non-symlink directory")
+	}
+	work := filepath.Join(parent, ".vpnctl-install-"+installID)
+	if err := os.Mkdir(work, 0700); err != nil {
+		return "", "", err
+	}
+	archivePath := filepath.Join(work, "x-ui.tar.gz")
+	if err := i.download(ctx, artifact, archivePath); err != nil {
+		return "", work, err
+	}
+	stage := filepath.Join(work, "stage")
+	if err := os.Mkdir(stage, 0700); err != nil {
+		return "", work, err
+	}
+	if err := extractVerifiedArchive(archivePath, stage); err != nil {
+		return "", work, err
+	}
+	root := filepath.Join(stage, "x-ui")
+	for _, required := range []string{"x-ui", "x-ui.service.debian", filepath.Join("bin", "xray-linux-"+architecture)} {
+		info, err := os.Lstat(filepath.Join(root, required))
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", work, fmt.Errorf("verified archive lacks required regular file %s", required)
+		}
+	}
+	return root, work, nil
 }
 
 func (i *Installer) download(ctx context.Context, artifact Artifact, destination string) error {

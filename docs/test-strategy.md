@@ -16,7 +16,7 @@
 - после reboot не восстанавливается здоровое состояние;
 - Critical/High security findings остаются неисправленными.
 
-Обязательный release gate на каждой из четырёх платформ:
+Обязательный release gate на каждой из шести платформ:
 
 ```text
 fresh VM -> bootstrap -> install -> status -> doctor
@@ -39,7 +39,7 @@ fresh VM -> bootstrap -> install -> status -> doctor
 | Destructive/red-team | Disk pressure, network faults, signals, reboot, повреждения и конфликты | только disposable VM со snapshot/serial console |
 
 Unit/component тесты должны быть детерминированными и параллельными. VM-тесты
-могут быть отдельным ручным или scheduled workflow, но четыре release-gate
+могут быть отдельным ручным или scheduled workflow, но шесть release-gate
 сценария обязательны перед публикацией артефакта.
 
 ## 3. Test seams и fakes
@@ -84,6 +84,8 @@ subprocess diagnostics и error object. Исключение — явно secret
 | P-2204-R64 | Ubuntu Server 22.04 LTS cloud image | arm64 | Public IPv4 | Полный lifecycle |
 | P-2404-A64 | Ubuntu Server 24.04 LTS cloud image | amd64 | Public IPv4 | Полный lifecycle |
 | P-2404-R64 | Ubuntu Server 24.04 LTS cloud image | arm64 | Public IPv4 | Полный lifecycle |
+| P-2604-A64 | Ubuntu Server 26.04 LTS cloud image | amd64 | Public IPv4 | Полный lifecycle |
+| P-2604-R64 | Ubuntu Server 26.04 LTS cloud image | arm64 | Public IPv4 | Полный lifecycle |
 
 Provisioning plan:
 
@@ -120,6 +122,7 @@ degraded result.
 |---|---|---|
 | I-01 | Чистая Ubuntu 22.04, обе arch | Install exit 0; 3x-ui/Xray active+enabled; VLESS Reality inbound; deny-by-default firewall сохраняет SSH; первый user и QR/URI валидны; doctor healthy |
 | I-02 | Чистая Ubuntu 24.04, обе arch | Те же assertions, включая корректную работу используемого firewall/systemd backend |
+| I-02A | Чистая Ubuntu 26.04, обе arch | Те же assertions; отдельно проверить изменения systemd, UFW/nftables, cloud image defaults и доступность pinned dependencies |
 | I-03 | Не root | До mutation: exit 3, stable `ROOT_REQUIRED`; нет файлов, packages или правил |
 | I-04 | Unsupported OS/arch | До download/mutation: exit 3; указаны поддерживаемые варианты |
 | I-05 | RAM ниже минимума | До mutation: exit 3 с фактическим и минимальным объёмом; повтор после увеличения RAM успешен |

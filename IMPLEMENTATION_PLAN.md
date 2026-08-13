@@ -85,7 +85,7 @@ Restore accepts only a local regular file, caps size/count/depth/ratio, rejects 
 - Unit: validation, CSPRNG formats, atomic storage, redaction, response envelopes, payload fixtures, archive rejection, renderer profiles and state transitions.
 - Integration with fakes: every command, retry/idempotency, interrupted transactions, full disk, occupied ports, network corruption, API failures and rollback.
 - Contract: tag-matched v3.5.0 API fixtures and real disposable 3x-ui instance.
-- Provisioning: clean Ubuntu 22.04/24.04 on amd64/arm64; install, reboot, status/doctor, create/delete, backup/restore, repeat install, update rollback and uninstall.
+- Provisioning: clean Ubuntu 22.04/24.04/26.04 on amd64/arm64; install, reboot, status/doctor, create/delete, backup/restore, repeat install, update rollback and uninstall.
 - Security: ShellCheck, `go test`, race tests, `go vet`, `govulncheck`, action/dependency pin review, canary-secret scans, malicious archives and external IPv4/IPv6 port scans.
 
 The local Windows build proves compilation and unit behavior only. Definition of Done additionally requires disposable supported VPS/VM runs and an independent merged-code security/QA audit.

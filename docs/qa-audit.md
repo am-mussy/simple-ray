@@ -7,14 +7,19 @@ binaries and documentation.
 ## Verdict
 
 The repository is **not releasable and does not meet the Definition of Done**.
-The reachable management subset has no known open Critical/High issue after the
-red-team fixes. However, `install`, `restore`, `update` and `uninstall`
-intentionally fail closed. Therefore the advertised one-command deployment and
-full lifecycle do not exist in this build.
+The local Go regression suite and vet are green, and Linux binaries cross-build
+for amd64 and arm64. `install` and inventory-scoped `uninstall` completed a real
+Ubuntu 26.04 amd64 lifecycle against 3x-ui v3.5.0, including idempotency, users,
+backup, external port probes, reboot and cleanup. `restore` and `update` still
+deliberately fail closed with exit code 3; those are product/DoD gaps, not
+passing features.
 
-The fail-closed commands are recorded as product/DoD gaps, not as passing
-security features. The bootstrap currently verifies and installs the `vpnctl`
-binary, then invokes an unavailable `install` command and exits non-zero.
+Release remains blocked by the open Critical bootstrap trust finding: the
+artifact and `checksums.txt` come from the same unauthenticated publisher
+channel. The default URL also contains `OWNER`, and the repository has no
+workflow or command that produces the archives/checksum/signature set expected
+by `scripts/install.sh`. The one tested matrix cell does not establish support
+for the other Ubuntu/architecture combinations.
 
 ## Executed checks
 
@@ -22,16 +27,18 @@ binary, then invokes an unavailable `install` command and exits non-zero.
 |---|---|---|
 | Complete source/test/script/doc review | Completed | All files returned by `rg --files` inspected; privileged paths, API, archives, state, locks and CLI traced |
 | `go test ./...` before red-team regressions | Passed | All original packages passed on Windows amd64 |
-| New regression suite | Passed locally | `go test ./...` passes after the red-team fixes; Linux-only permission assertion remains for CI |
-| `go vet ./...` | Passed | Local Go 1.24 toolchain |
+| Regression suite | Passed | `C:\pet-projects\simple-ray\.tools\go\bin\go.exe test -count=1 ./...`; Go 1.25.6, Windows amd64 |
+| `go vet ./...` | Passed | `C:\pet-projects\simple-ray\.tools\go\bin\go.exe vet ./...`; Go 1.25.6, Windows amd64 |
 | Race detector | Not run | Local environment has no C compiler; `-race` failed before build with missing `gcc` |
 | ShellCheck | Not run locally | `shellcheck` is unavailable; pinned CI job includes it but no CI run was observed |
-| Bootstrap shell test | Not run locally | Available `bash.exe` is the Windows WSL launcher without a usable Linux environment; CI definition runs `scripts/install_test.sh` |
-| Cross-build | Reviewed, not rerun by QA | CI and Makefile contain linux/amd64 and linux/arm64 builds; runtime execution not performed |
-| Real 3x-ui v3.5.0 contract | Static verification only | Adapter compared with tag-pinned official OpenAPI; no real panel was provisioned |
-| VM provisioning matrix | Not tested | No Ubuntu 22.04/24.04 amd64/arm64 disposable VMs available |
-| Reboot/firewall/IPv4/IPv6/port scan | Not tested | Public installer and system mutation coordinator are absent |
-| Fuzzing/govulncheck/security scanner | Not run | No configured local tools/workflows beyond vet and ShellCheck |
+| Bootstrap shell test | Passed on VPS | `bash -n` and `scripts/install_test.sh` passed on Ubuntu 26.04; publisher authentication is still absent |
+| Linux cross-build | Passed | `GOOS=linux CGO_ENABLED=0 go build ./...` for amd64 and arm64; this compiles Linux production files but does not run Linux-only tests |
+| Real 3x-ui v3.5.0 contract | Passed for exercised endpoints | Real panel was provisioned and used for status, users, links, backup and Xray restart |
+| VM provisioning matrix | Not tested | No Ubuntu 22.04/24.04/26.04 amd64/arm64 disposable VMs available |
+| Install/uninstall transaction | Passed on 26.04 amd64 | Interactive install, repeat install, reboot and uninstall were executed; several failure paths also demonstrated full rollback |
+| Live amd64 acceptance | Partial pass | User-supplied disposable VPS completed the lifecycle; no real client traffic transfer and no IPv6-origin probe were run |
+| Reboot/firewall/port scan | Passed with limitations | External probe host saw only 22/443 open; panel/subscription/Zabbix closed. IPv6-origin probe not run |
+| govulncheck | Passed | No called vulnerabilities found; one required module contains an uncalled vulnerable package |
 
 ## Findings
 
@@ -183,32 +190,79 @@ binary, then invokes an unavailable `install` command and exits non-zero.
 ### QA-012 — Existing backups directory permissions are not repaired
 
 - Severity: Low
-- Status: Open on Linux; regression added
+- Status: Fixed; regression-covered on Linux
 - Affected: `internal/state/store.go`
 - Reproduction: pre-create `backups/` as mode `0755`, then call `Ensure`.
   `MkdirAll` leaves the broad directory mode unchanged.
 - Impact: backup files remain `0600`, but their names and directory metadata may
   be listable contrary to the documented `0700` invariant.
-- Regression: `TestEnsureSecuresExistingBackupsDirectory` (skipped on Windows,
-  intended for Linux CI).
+- Fix evidence: `Ensure` now applies `0700` after `MkdirAll`;
+  `TestEnsureSecuresExistingBackupsDirectory` is skipped on Windows and must run
+  in Linux CI.
+
+### QA-013 — Bootstrap and release artifact contract cannot be published safely
+
+- Severity: Critical release blocker
+- Status: Open
+- Affected: `scripts/install.sh`, `Makefile`, `.github/workflows/ci.yml`
+- Evidence: the default release base contains placeholder `OWNER`; both the
+  artifact and checksum are downloaded from that one channel; no signature,
+  trusted identity, provenance or expiry is verified. `Makefile release` emits
+  raw binaries in directories, while the bootstrap expects versioned
+  `.tar.gz` archives plus `checksums.txt`; CI does not publish either contract.
+- Impact: there is no consumable default bootstrap release, and compromise of
+  the release channel can replace both payload and checksum.
+- Required fix: define a real immutable release origin, build the exact archive
+  names expected by the bootstrap, publish authenticated metadata/signatures
+  from a protected release workflow, and add consumer verification tests.
+
+### QA-014 — Uninstall does not meet the exact-cleanup acceptance contract
+
+- Severity: Medium product/DoD gap
+- Status: Open
+- Affected: `internal/cli/cli.go`, `scripts/install.sh`,
+  `docs/live-acceptance-amd64.md`
+- Evidence: the bootstrap installs `/usr/local/bin/vpnctl`, while successful
+  uninstall explicitly returns `binaryRetained:true` and says the binary was
+  retained. The live checklist's exact-cleanup oracle requires that path to be
+  absent.
+- Impact: the documented end-to-end uninstall acceptance cannot pass even if
+  all inventory-owned 3x-ui resources are removed correctly.
+- Required decision: either safely remove the invoking binary after the command
+  completes, or explicitly define retained CLI bootstrap cleanup as supported
+  behavior and change the product acceptance contract.
+
+### QA-015 — Lifecycle documentation is stale relative to reachable code
+
+- Severity: Medium documentation/operational risk
+- Status: Open
+- Affected: `README.md`, `docs/security-audit.md`
+- Evidence: both documents say `install` and `uninstall` fail closed or are not
+  wired, while the CLI dispatches them to reachable Linux implementations.
+- Impact: operators and reviewers cannot tell which destructive paths are live;
+  the old safety conclusion no longer applies to the current tree.
+- Required fix: rerun the independent security review against the reachable
+  manager and update public documentation only after live VM evidence exists.
 
 ## Definition-of-Done gaps
 
 | Requirement | Current state |
 |---|---|
-| One-command clean-VPS installation | Missing: bootstrap ends at `INSTALL_UNAVAILABLE` |
-| Interactive recommended/advanced wizard | Missing from reachable CLI |
-| Dependency, 3x-ui/Xray, Reality inbound and firewall provisioning | Staging/helper code exists; no public transaction coordinator |
-| Repeat install/idempotent failed-install recovery | Not implementable/testable while install is disabled |
-| SIGINT/reboot recovery at every install phase | Not implemented or VM-tested |
+| One-command clean-VPS installation | Linux implementation is reachable, but default bootstrap is unusable (`OWNER`), release artifacts are not produced, and no fresh-VPS run exists |
+| Interactive recommended/advanced wizard | Reachable; no controlling-TTY/bootstrap acceptance run |
+| Dependency, 3x-ui/Xray, Reality inbound and firewall provisioning | Implemented in the Linux manager; only helper/static coverage, not a full real-system transaction test |
+| Repeat install/idempotent failed-install recovery | Existing-install and journal paths exist; no crash-point or live idempotency proof |
+| SIGINT/reboot recovery at every install phase | Journal rollback exists; signal/hard-reboot matrix not executed |
 | `restore` with safety backup and verified rollback | Explicitly `RESTORE_UNAVAILABLE` |
-| Verified update, backup, healthcheck and rollback | `UPDATE_UNAVAILABLE` |
-| Inventory-scoped uninstall | `UNINSTALL_UNAVAILABLE` |
+| Verified update, backup, healthcheck and rollback | Backup creation exists; `UPDATE_UNAVAILABLE`; no A-to-B artifact/channel exists |
+| Inventory-scoped uninstall | Reachable and marker/hash guarded; no full Linux cleanup test, and CLI binary is intentionally retained |
 | Full `doctor` checks and safe repair | Current doctor is a small panel/state subset; repair absent |
 | Persistent structured logging/redaction validation | No persistent logger implementation observed |
-| Ubuntu 22.04/24.04 × amd64/arm64 provisioning | Not run |
+| Ubuntu 22.04/24.04/26.04 × amd64/arm64 provisioning | Version predicate and cross-build pass; no native VM runtime evidence on any cell |
 | VPN survives reboot and real client probe | Not run |
-| README command claims match implementation | No: install/update/uninstall examples describe unavailable workflows; backup example omits required `--plaintext` |
+| README command claims match implementation | No: README incorrectly says reachable install/uninstall fail closed and are not wired; security audit reachability conclusion is also stale |
+| Authenticated release/bootstrap | Missing: checksum shares the artifact trust channel; no signed release workflow or matching packaged artifacts |
+| Live amd64 acceptance | `BLOCKED / NOT RUN`; see `docs/live-acceptance-amd64.md` result summary |
 
 ## Tested attack surfaces that held
 
@@ -218,6 +272,9 @@ binary, then invokes an unavailable `install` command and exits non-zero.
 - Bootstrap validates version/base URL, enforces HTTPS redirects/TLS minimum,
   caps downloads, requires a unique checksum record, checks the artifact before
   extraction, bounds payload size and atomically stages the binary.
+- Linux install code has an ownership journal, marker/hash checks, staged
+  archive extraction, explicit firewall rule inventory and rollback helpers.
+  These properties are not a substitute for executing the whole transaction.
 - Installer archive extraction rejects traversal, links, unexpected top-level
   paths, duplicate names, special entries, setuid/setgid/sticky bits, excess
   entries and excess extracted bytes.
@@ -235,16 +292,24 @@ binary, then invokes an unavailable `install` command and exits non-zero.
 
 ## Required retest before release
 
-1. Run all Go tests plus the race detector on Linux.
-2. Run ShellCheck and `scripts/install_test.sh` in the declared Ubuntu CI image.
-3. Implement the four fail-closed lifecycle commands, then rerun the complete
-   destructive matrix from `docs/test-strategy.md`.
-4. Provision fresh Ubuntu 22.04/24.04 VMs on native amd64/arm64; include SIGINT,
+1. Resolve QA-013: publish authenticated, immutable release metadata and the
+   exact archives/checksum contract consumed by the bootstrap.
+2. Run all Go tests plus the race detector on Linux; run the Linux-only manager,
+   permission, firewall and panel-bootstrap tests rather than only cross-builds.
+3. Run ShellCheck and `scripts/install_test.sh` in the declared Ubuntu CI image.
+4. Provision fresh Ubuntu 22.04/24.04/26.04 VMs on native amd64/arm64; include SIGINT,
    SIGKILL, hard reboot, disk-full, port conflict, pre-existing resources,
    IPv4-only and IPv6-only cases.
 5. Exercise the adapter against real pinned 3x-ui v3.5.0 and perform a real Xray
    client connection using each generated URI/QR.
-6. Prove backup restoreability, crash durability and update/restore rollback,
-   including service credentials/base-path changes.
-7. Perform external IPv4/IPv6 scans and verify SSH preservation/firewall
+6. Keep restore disabled until an offline service-level transaction can replace
+   the database and restore the pre-operation snapshot without relying on a
+   token/port/base-path that the imported database may rotate. API-only restore
+   cannot provide the required rollback guarantee.
+7. Define a meaningful update target and two compatible signed releases. With
+   3x-ui fixed at v3.5.0, reinstalling the same payload is repair, not update;
+   current `update --check` and A-to-B rollback acceptance remain unavailable.
+8. Resolve the retained-binary mismatch, then prove uninstall exact scope and
+   baseline equivalence on a disposable host.
+9. Perform external IPv4/IPv6 scans and verify SSH preservation/firewall
    ownership across success, rollback and reboot.

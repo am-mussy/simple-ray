@@ -8,6 +8,28 @@ import (
 	"testing"
 )
 
+func TestSupportedUbuntuVersions(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{version: "22.04", want: true},
+		{version: "24.04", want: true},
+		{version: "26.04", want: true},
+		{version: "20.04", want: false},
+		{version: "25.10", want: false},
+		{version: "26.10", want: false},
+		{version: "", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.version, func(t *testing.T) {
+			if got := supportedUbuntuVersion(test.version); got != test.want {
+				t.Fatalf("supportedUbuntuVersion(%q) = %t, want %t", test.version, got, test.want)
+			}
+		})
+	}
+}
+
 func TestExtractAcceptsUpstreamRootDirectoryEntry(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "archive.tar.gz")
 	f, err := os.Create(source)

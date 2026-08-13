@@ -7,12 +7,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"os"
+	"strconv"
 	"strings"
 
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/mussy/simple-ray/internal/app"
 	"github.com/mussy/simple-ray/internal/domain"
+	"github.com/mussy/simple-ray/internal/installer"
+	"github.com/mussy/simple-ray/internal/ui"
 )
 
 type Options struct {
@@ -28,6 +33,7 @@ type Options struct {
 
 type CLI struct {
 	Service *app.Service
+	In      io.Reader
 	Out     io.Writer
 	Err     io.Writer
 	IsTTY   bool
@@ -83,11 +89,11 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	case "restore":
 		runErr = c.restore(ctx, opts, commandArgs[1:])
 	case "install":
-		runErr = domain.E("INSTALL_UNAVAILABLE", "safe installation is not enabled in this development build", "Use a verified release after VM validation", 3, nil)
+		runErr = c.install(ctx, opts, commandArgs[1:])
 	case "update":
 		runErr = domain.E("UPDATE_UNAVAILABLE", "safe updates are not enabled in this development build", "Use a verified release after rollback validation", 3, nil)
 	case "uninstall":
-		runErr = domain.E("UNINSTALL_UNAVAILABLE", "safe uninstall is not enabled in this development build", "Remove only inventory-owned resources manually", 3, nil)
+		runErr = c.uninstall(ctx, opts, commandArgs[1:])
 	default:
 		runErr = domain.E("UNKNOWN_COMMAND", fmt.Sprintf("unknown command %q", commandArgs[0]), "Run vpnctl help", 2, nil)
 	}
@@ -95,6 +101,191 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.fail(opts, runErr)
 	}
 	return 0
+}
+
+func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
+	set := newFlagSet("install")
+	user := set.String("user", "", "first VPN user")
+	serverName := set.String("server-name", "", "server display name")
+	publicAddress := set.String("public-address", "", "public IP address")
+	listenPort := set.Int("listen-port", 443, "VLESS port")
+	sshPort := set.Int("ssh-port", 0, "SSH listener port")
+	realitySNI := set.String("reality-server-name", "www.microsoft.com", "Reality server name")
+	realityTarget := set.String("reality-destination", "www.microsoft.com:443", "Reality target")
+	mode := set.String("mode", "recommended", "setup mode")
+	panelAccess := set.String("panel-access", "local", "panel access")
+	positionals, err := parseSet(set, args)
+	if err != nil || len(positionals) != 0 {
+		return usage("invalid install arguments")
+	}
+	if *mode != "recommended" && *mode != "advanced" {
+		return usage("mode must be recommended or advanced")
+	}
+	if *panelAccess != "local" {
+		return domain.E("UNSAFE_PANEL_EXPOSURE", "only a loopback panel is supported", "Use --panel-access local", 3, nil)
+	}
+	interactive := opts.Interactive || c.IsTTY && !opts.NonInteractive
+	if interactive {
+		if err := c.installWizard(user, serverName, publicAddress, listenPort, sshPort, realitySNI, realityTarget, mode, opts.Yes); err != nil {
+			return err
+		}
+	}
+	if *user == "" {
+		return usage("--user is required")
+	}
+	if *publicAddress == "" {
+		*publicAddress = publicAddressFromSSH()
+	}
+	if *publicAddress == "" {
+		return domain.E("PUBLIC_ADDRESS_REQUIRED", "public address could not be detected from SSH", "Pass --public-address <IP>", 3, nil)
+	}
+	result, err := c.Service.Install(ctx, installer.Request{User: *user, ServerName: *serverName, PublicAddress: *publicAddress, ListenPort: *listenPort, SSHPort: *sshPort, RealitySNI: *realitySNI, RealityTarget: *realityTarget})
+	if err != nil {
+		return err
+	}
+	if opts.Output == "json" {
+		return writeJSON(c.Out, map[string]any{"ok": true, "existing": result.Existing, "address": result.State.PublicAddress, "user": result.User.Name})
+	}
+	if result.Existing {
+		fmt.Fprintln(c.Out, "Existing installation is healthy. Nothing to change.")
+		return nil
+	}
+	fmt.Fprintf(c.Out, "Installation complete.\nAddress: %s\nProtocol: VLESS TCP Reality\nUser: %s\nShow the client configuration with: sudo vpnctl qr %s\n", result.State.PublicAddress, result.User.Name, result.User.Name)
+	if interactive {
+		return c.showUser(ctx, opts, result.User.Name, true)
+	}
+	return nil
+}
+
+func (c *CLI) installWizard(user, serverName, publicAddress *string, listenPort, sshPort *int, realitySNI, realityTarget, mode *string, confirmed bool) error {
+	if c.In == nil {
+		return domain.E("TTY_REQUIRED", "interactive input is unavailable", "Use --non-interactive with required flags", 3, nil)
+	}
+	renderer, err := ui.NewRenderer(c.Err, ui.Options{Terminal: ui.TerminalAlways, Color: ui.ColorMode("auto"), Unicode: ui.UnicodeMode("auto")})
+	if err != nil {
+		return err
+	}
+	defer renderer.Close()
+	renderer.Banner("VPNCTL", "Secure server setup")
+	prompter := ui.NewPrompter(c.In, c.Err, true)
+	selected, err := prompter.Select("Choose setup", []ui.Choice{{Label: "Recommended", Description: "automatic secure defaults"}, {Label: "Advanced", Description: "network settings"}}, 0)
+	if err != nil {
+		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "Run vpnctl install again", 130, err)
+	}
+	if selected == 1 {
+		*mode = "advanced"
+	}
+	hostname, _ := os.Hostname()
+	if *serverName == "" {
+		*serverName = hostname
+	}
+	if *publicAddress == "" {
+		*publicAddress = publicAddressFromSSH()
+	}
+	validateName := func(value string) error { _, err := domain.ValidateUserName(value); return err }
+	if *mode == "recommended" {
+		*user, err = prompter.Input("Create your first VPN user", "vpn", validateName)
+	} else {
+		*serverName, err = prompter.Input("Server name", *serverName, requireText)
+		if err == nil {
+			*user, err = prompter.Input("Create your first VPN user", "vpn", validateName)
+		}
+		if err == nil {
+			*publicAddress, err = prompter.Input("Public IP", *publicAddress, validateIP)
+		}
+		if err == nil {
+			value := strconv.Itoa(*listenPort)
+			value, err = prompter.Input("VLESS port", value, validatePort)
+			if err == nil {
+				*listenPort, _ = strconv.Atoi(value)
+			}
+		}
+		if err == nil {
+			*realitySNI, err = prompter.Input("Reality server name", *realitySNI, requireText)
+		}
+		if err == nil {
+			*realityTarget, err = prompter.Input("Reality destination", *realityTarget, requireText)
+		}
+		if err == nil && *sshPort == 0 {
+			*sshPort = sshPortFromConnection()
+		}
+	}
+	if err != nil {
+		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "Run vpnctl install again", 130, err)
+	}
+	if *publicAddress == "" {
+		return domain.E("PUBLIC_ADDRESS_REQUIRED", "public address could not be detected from SSH", "Use Advanced or pass --public-address <IP>", 3, nil)
+	}
+	renderer.Section("Ready to install")
+	renderer.Table([]ui.Column{{Title: "SETTING", MinWidth: 12}, {Title: "VALUE", MinWidth: 20}}, [][]string{{"Server", *serverName}, {"VPN user", *user}, {"Address", *publicAddress}, {"Protocol", "VLESS TCP Reality"}, {"VPN port", strconv.Itoa(*listenPort)}, {"Admin panel", "Local only"}})
+	if confirmed {
+		return nil
+	}
+	ok, err := prompter.Confirm("Install now?", true)
+	if err != nil || !ok {
+		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "No system changes were made", 130, err)
+	}
+	return nil
+}
+
+func publicAddressFromSSH() string {
+	fields := strings.Fields(os.Getenv("SSH_CONNECTION"))
+	if len(fields) != 4 {
+		return ""
+	}
+	address := net.ParseIP(fields[2])
+	if address == nil || address.IsPrivate() || address.IsLoopback() || address.IsUnspecified() {
+		return ""
+	}
+	return address.String()
+}
+
+func sshPortFromConnection() int {
+	fields := strings.Fields(os.Getenv("SSH_CONNECTION"))
+	if len(fields) != 4 {
+		return 0
+	}
+	port, _ := strconv.Atoi(fields[3])
+	return port
+}
+
+func requireText(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("value is required")
+	}
+	return nil
+}
+
+func validateIP(value string) error {
+	if net.ParseIP(value) == nil {
+		return errors.New("enter a valid IP address")
+	}
+	return nil
+}
+
+func validatePort(value string) error {
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("enter a port from 1 to 65535")
+	}
+	return nil
+}
+
+func (c *CLI) uninstall(ctx context.Context, opts Options, args []string) error {
+	set := newFlagSet("uninstall")
+	keepData := set.Bool("keep-data", false, "keep 3x-ui configuration")
+	removeBackups := set.Bool("remove-backups", false, "remove backups")
+	positionals, err := parseSet(set, args)
+	if err != nil || len(positionals) != 0 {
+		return usage("usage: vpnctl uninstall [--keep-data] --yes")
+	}
+	if !opts.Yes {
+		return domain.E("CONFIRMATION_REQUIRED", "uninstall requires confirmation", "Retry with --yes", 3, nil)
+	}
+	if err := c.Service.Uninstall(ctx, *keepData, *removeBackups); err != nil {
+		return err
+	}
+	return c.result(opts, map[string]any{"ok": true, "uninstalled": true, "dataKept": *keepData, "binaryRetained": true}, "The managed VPN service was uninstalled. The vpnctl binary was retained.\n")
 }
 
 func (c *CLI) version(opts Options) error {
@@ -114,20 +305,20 @@ func (c *CLI) status(ctx context.Context, opts Options, args []string) error {
 		return err
 	}
 	status := "online"
-	if !server.XrayState {
+	if !server.XrayRunning() {
 		status = "degraded"
 	}
 	if opts.Output == "json" {
-		if err := writeJSON(c.Out, map[string]any{"ok": server.XrayState, "status": status, "address": state.PublicAddress, "protocol": "VLESS TCP Reality", "users": len(users), "xray": map[string]any{"state": boolState(server.XrayState)}, "panel": map[string]any{"state": "running", "exposure": "local"}, "version": domain.ProductVersion}); err != nil {
+		if err := writeJSON(c.Out, map[string]any{"ok": server.XrayRunning(), "status": status, "address": state.PublicAddress, "protocol": "VLESS TCP Reality", "users": len(users), "xray": map[string]any{"state": server.Xray.State, "version": server.Xray.Version}, "panel": map[string]any{"state": "running", "exposure": "local"}, "version": domain.ProductVersion}); err != nil {
 			return err
 		}
-		if !server.XrayState {
+		if !server.XrayRunning() {
 			return silentExit(5)
 		}
 		return nil
 	}
-	fmt.Fprintf(c.Out, "Server\n------\nStatus       %s\nAddress      %s\nProtocol     VLESS TCP Reality\nUsers        %d\nXray         %s\n3x-ui        running (local only)\nVersion      vpnctl %s\n", strings.ToUpper(status), state.PublicAddress, len(users), boolState(server.XrayState), domain.ProductVersion)
-	if !server.XrayState {
+	fmt.Fprintf(c.Out, "Server\n------\nStatus       %s\nAddress      %s\nProtocol     VLESS TCP Reality\nUsers        %d\nXray         %s\n3x-ui        running (local only)\nVersion      vpnctl %s\n", strings.ToUpper(status), state.PublicAddress, len(users), server.Xray.State, domain.ProductVersion)
+	if !server.XrayRunning() {
 		return silentExit(5)
 	}
 	return nil
@@ -482,12 +673,6 @@ func writeJSON(w io.Writer, value any) error {
 }
 func usage(message string) error {
 	return domain.E("INVALID_ARGUMENT", message, "Run vpnctl help", 2, nil)
-}
-func boolState(value bool) string {
-	if value {
-		return "running"
-	}
-	return "stopped"
 }
 func enabledState(value bool) string {
 	if value {

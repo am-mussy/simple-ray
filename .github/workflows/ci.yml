@@ -25,11 +25,13 @@ jobs:
 
       - name: Check shell scripts
         run: |
-          bash -n scripts/install.sh scripts/install_test.sh
-          shellcheck scripts/install.sh scripts/install_test.sh
+          bash -n start.sh scripts/install.sh scripts/install_test.sh scripts/start_test.sh
+          shellcheck start.sh scripts/install.sh scripts/install_test.sh scripts/start_test.sh
 
       - name: Test bootstrap
-        run: bash scripts/install_test.sh
+        run: |
+          bash scripts/install_test.sh
+          bash scripts/start_test.sh
 
       - name: Test Go packages
         run: go test ./...

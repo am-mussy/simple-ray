@@ -15,6 +15,7 @@ import (
 
 	"github.com/mussy/simple-ray/internal/backup"
 	"github.com/mussy/simple-ray/internal/domain"
+	"github.com/mussy/simple-ray/internal/installer"
 	"github.com/mussy/simple-ray/internal/lock"
 	"github.com/mussy/simple-ray/internal/state"
 	"github.com/mussy/simple-ray/internal/xui"
@@ -37,13 +38,73 @@ type Service struct {
 	Store      *state.Store
 	LockPath   string
 	APIFactory APIFactory
+	Installer  *installer.Manager
 }
 
 func New(store *state.Store, lockPath string) *Service {
-	return &Service{Store: store, LockPath: lockPath, APIFactory: func(s domain.State, secret domain.Secrets) (API, error) {
+	return &Service{Store: store, LockPath: lockPath, Installer: installer.NewManager(store), APIFactory: func(s domain.State, secret domain.Secrets) (API, error) {
 		base := fmt.Sprintf("http://127.0.0.1:%d/%s", s.PanelPort, strings.Trim(s.PanelBasePath, "/"))
 		return xui.New(base, secret.APIToken)
 	}}
+}
+
+func (s *Service) Install(ctx context.Context, request installer.Request) (installer.Result, error) {
+	guard, err := lock.Acquire(s.LockPath, "install")
+	if err != nil {
+		return installer.Result{}, domain.E("LOCKED", "another vpnctl operation is active", "Wait and retry", 3, err)
+	}
+	defer guard.Release()
+	result, err := s.Installer.Install(ctx, request)
+	if err != nil {
+		return result, domain.E("INSTALL_FAILED", "VPN server installation failed: "+err.Error(), "Resolve the reported condition and retry", 1, err)
+	}
+	if result.Existing {
+		_, api, apiErr := s.api()
+		if apiErr != nil {
+			return result, apiErr
+		}
+		client, clientErr := api.GetClient(ctx, request.User)
+		if clientErr != nil {
+			var apiError *xui.APIError
+			if !errors.As(clientErr, &apiError) || !isNotFoundMessage(apiError.Message) {
+				return result, domain.E("API_UNAVAILABLE", "existing user could not be checked", "Run sudo vpnctl doctor", 1, clientErr)
+			}
+			client = xui.ClientRecord{Email: request.User, Enable: true, Flow: "xtls-rprx-vision"}
+			if err := api.AddClient(ctx, xui.ClientCreate{Client: client, InboundIDs: []int64{result.State.InboundID}}); err != nil {
+				return result, domain.E("USER_CREATE_FAILED", "existing installation is healthy but the requested user could not be created", "Run sudo vpnctl doctor", 1, err)
+			}
+			client, clientErr = api.GetClient(ctx, request.User)
+			if clientErr != nil {
+				return result, domain.E("USER_VERIFY_FAILED", "requested user was created but could not be verified", "Run sudo vpnctl doctor", 5, clientErr)
+			}
+		} else if len(client.InboundIDs) != 1 || client.InboundIDs[0] != result.State.InboundID {
+			return result, domain.E("USER_CONFLICT", "requested user exists outside the managed inbound", "Choose another user name", 4, nil)
+		}
+		if len(client.InboundIDs) != 1 || client.InboundIDs[0] != result.State.InboundID {
+			return result, domain.E("USER_CONFLICT", "requested user is not attached exclusively to the managed inbound", "Choose another user name", 4, nil)
+		}
+		status, err := api.Status(ctx)
+		if err != nil || !status.XrayRunning() {
+			return result, domain.E("SERVICE_DEGRADED", "existing installation failed health checks", "Run sudo vpnctl doctor", 5, err)
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) Uninstall(ctx context.Context, keepData, removeBackups bool) error {
+	guard, err := lock.Acquire(s.LockPath, "uninstall")
+	if err != nil {
+		return domain.E("LOCKED", "another vpnctl operation is active", "Wait and retry", 3, err)
+	}
+	defer guard.Release()
+	installed, err := s.Store.LoadState()
+	if err != nil {
+		return domain.E("NOT_INSTALLED", "vpnctl is not installed", "No changes were made", 4, err)
+	}
+	if err := s.Installer.Uninstall(ctx, installed, keepData, removeBackups); err != nil {
+		return domain.E("UNINSTALL_FAILED", "vpnctl could not be uninstalled safely", "Resolve the ownership mismatch and retry", 1, err)
+	}
+	return nil
 }
 
 func (s *Service) api() (domain.State, API, error) {
@@ -69,7 +130,7 @@ func (s *Service) Status(ctx context.Context) (domain.State, xui.ServerStatus, [
 	}
 	server, serverErr := api.Status(ctx)
 	clients, clientsErr := api.ListClients(ctx)
-	if serverErr != nil {
+	if serverErr != nil || !server.XrayRunning() {
 		return installation, server, nil, domain.E("SERVICE_DEGRADED", "3x-ui is not healthy", "Run sudo vpnctl doctor", 5, serverErr)
 	}
 	if clientsErr != nil {
@@ -110,6 +171,9 @@ func (s *Service) AddUser(ctx context.Context, rawName string) (domain.User, boo
 	created, err := api.GetClient(ctx, name)
 	if err != nil {
 		return domain.User{}, false, domain.E("USER_VERIFY_FAILED", "VPN user was created but could not be verified", "Run sudo vpnctl doctor", 5, err)
+	}
+	if len(created.InboundIDs) != 1 || created.InboundIDs[0] != installation.InboundID {
+		return domain.User{}, false, domain.E("USER_VERIFY_FAILED", "VPN user attachment could not be verified", "Run sudo vpnctl doctor", 5, nil)
 	}
 	return toUser(created), true, nil
 }
@@ -234,7 +298,7 @@ func (s *Service) Doctor(ctx context.Context) []domain.Check {
 	} else {
 		checks = append(checks,
 			domain.Check{Group: "Services", Name: "3x-ui API", Status: "passed"},
-			domain.Check{Group: "Services", Name: "Xray", Status: boolStatus(status.XrayState)},
+			domain.Check{Group: "Services", Name: "Xray", Status: boolStatus(status.XrayRunning())},
 		)
 	}
 	return checks

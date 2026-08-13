@@ -1,5 +1,35 @@
 # vpnctl security audit and threat model
 
+## Final implementation retest — 2026-08-13
+
+Release verdict: **BLOCKED**.
+
+- **Critical open — bootstrap publisher authentication.** `scripts/install.sh`
+  still downloads the executable and `checksums.txt` from the same release
+  channel. HTTPS plus a same-channel checksum detects corruption but does not
+  authenticate the publisher after a release-account/origin compromise. The
+  default URL also contains `OWNER`, and no signed release workflow currently
+  produces the expected artifacts.
+- **No reachable High finding remains open in the reviewed direct-binary
+  install/uninstall path.** High findings discovered during the live cycle were
+  fixed: stop-before-firewall rollback, UFW post-install drift fingerprinting,
+  explicit active-SSH listener verification, privileged loopback panel,
+  isolated credential bootstrap, subscription disablement, inventory-only
+  cleanup, restrictive data modes and Xray executable immutability.
+- `restore` and `update` are unavailable with exit code 3. This is a product/DoD
+  gap and the safe behavior until offline restore rollback and a signed A/B
+  release channel exist.
+
+Retest evidence: local `go test -count=1 ./...` and `go vet ./...` passed;
+Linux amd64/arm64 cross-builds and Linux test-binary compilation passed. On a
+disposable Ubuntu 26.04 amd64 VPS, direct-binary install, real 3x-ui/Xray API,
+users, URI, backup no-overwrite, repeat install, reboot, external port probes
+and uninstall completed. Bootstrap shell tests and `govulncheck` passed; no
+called vulnerability was reported. The final UFW drift, SSH listener and
+rollback-order hardening landed after the live cleanup and has regression/static
+coverage only. Ubuntu 22.04/24.04, arm64, IPv6-origin and SIGKILL matrices remain
+open release gates.
+
 ## Audit status
 
 | Field | Value |
@@ -76,7 +106,7 @@ small install.sh ---> verified vpnctl binary ---> privileged local operations
 
 ### Explicit assumptions and limits
 
-- Ubuntu 22.04/24.04 on amd64/arm64 is the only supported platform for the MVP.
+- Ubuntu 22.04/24.04/26.04 on amd64/arm64 is the only supported platform for the MVP.
 - The initial SSH connection, VPS image, kernel, root account, and provider control plane are trusted. A malicious provider or existing root compromise is out of scope.
 - Upstream 3x-ui and Xray are not assumed safe merely because they are popular. Exact reviewed versions and artifact digests remain required.
 - The 3x-ui panel is an administrative application, not a camouflage boundary. Its random port and base path do not replace authentication, TLS, or firewall policy.
@@ -309,7 +339,7 @@ The following required evidence was unavailable in this Windows audit environmen
 
 - ShellCheck and bootstrap execution because no usable Bash/ShellCheck executable was installed locally; CI declares both but this audit did not observe a CI run.
 - Go race testing because the available Windows toolchain has CGO disabled; Linux CI also does not currently run `go test -race`.
-- Ubuntu 22.04/24.04 destructive VM provisioning, reboot, interrupted transaction, UFW/nftables coexistence, SSH preservation, systemd hardening, and external IPv4/IPv6 scans.
+- Ubuntu 22.04/24.04/26.04 destructive VM provisioning, reboot, interrupted transaction, UFW/nftables coexistence, SSH preservation, systemd hardening, and external IPv4/IPv6 scans.
 - Live integration against pinned 3x-ui v3.5.0 and verification of the recorded upstream artifact digests from an independent authenticated source.
 - A real release artifact, signature, attestation, SBOM, clean-build provenance, or reproducibility comparison.
 
@@ -370,7 +400,7 @@ The second review must inspect the merged implementation rather than confirm thi
 
 ### Network and service tests
 
-- [ ] On clean Ubuntu 22.04 and 24.04 VMs for amd64/arm64 where available, scan all TCP/UDP ports externally over IPv4 and IPv6. Only detected SSH and selected VLESS TCP may be public by default.
+- [ ] On clean Ubuntu 22.04, 24.04, and 26.04 VMs for amd64/arm64 where available, scan all TCP/UDP ports externally over IPv4 and IPv6. Only detected SSH and selected VLESS TCP may be public by default.
 - [ ] Confirm panel/API bind only to loopback and cannot be reached through public addresses, IPv6, container interfaces, or provider networking.
 - [ ] Validate deny-by-default firewall policy, required ICMPv6 behavior, reboot persistence, rule ownership, idempotency, and no broad source ranges/ports.
 - [ ] Exercise existing UFW rules, nonstandard SSH port, nftables/iptables conflicts, IPv6 disabled, IPv6-only host, and active SSH while applying/rolling back firewall. Verify a second SSH session before accepting success.

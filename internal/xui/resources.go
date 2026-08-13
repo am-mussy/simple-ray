@@ -15,7 +15,8 @@ import (
 )
 
 type ClientRecord struct {
-	ID         string  `json:"id,omitempty"`
+	RecordID   int64   `json:"id,omitempty"`
+	ID         string  `json:"uuid,omitempty"`
 	Email      string  `json:"email"`
 	Enable     bool    `json:"enable"`
 	ExpiryTime int64   `json:"expiryTime"`
@@ -24,6 +25,25 @@ type ClientRecord struct {
 }
 
 type ClientCreate struct {
+	Client     ClientRecord `json:"client"`
+	InboundIDs []int64      `json:"inboundIds"`
+}
+
+func (c ClientCreate) MarshalJSON() ([]byte, error) {
+	client := struct {
+		ID         string `json:"id,omitempty"`
+		Email      string `json:"email"`
+		Enable     bool   `json:"enable"`
+		ExpiryTime int64  `json:"expiryTime"`
+		Flow       string `json:"flow,omitempty"`
+	}{ID: c.Client.ID, Email: c.Client.Email, Enable: c.Client.Enable, ExpiryTime: c.Client.ExpiryTime, Flow: c.Client.Flow}
+	return json.Marshal(struct {
+		Client     any     `json:"client"`
+		InboundIDs []int64 `json:"inboundIds"`
+	}{Client: client, InboundIDs: c.InboundIDs})
+}
+
+type clientDetail struct {
 	Client     ClientRecord `json:"client"`
 	InboundIDs []int64      `json:"inboundIds"`
 }
@@ -44,9 +64,14 @@ type Inbound struct {
 
 type ServerStatus struct {
 	CPU       float64 `json:"cpu"`
-	Memory    int64   `json:"mem"`
-	XrayState bool    `json:"xrayState"`
+	XrayState bool    `json:"-"`
+	Xray      struct {
+		State   string `json:"state"`
+		Version string `json:"version"`
+	} `json:"xray"`
 }
+
+func (s ServerStatus) XrayRunning() bool { return s.XrayState || s.Xray.State == "running" }
 
 type KeyPair struct {
 	PrivateKey string `json:"privateKey"`
@@ -69,8 +94,10 @@ func (c *Client) ListClients(ctx context.Context) ([]ClientRecord, error) {
 }
 
 func (c *Client) GetClient(ctx context.Context, name string) (ClientRecord, error) {
-	var result ClientRecord
-	err := c.doJSON(ctx, http.MethodGet, nil, &result, "clients", "get", url.PathEscape(name))
+	var detail clientDetail
+	err := c.doJSON(ctx, http.MethodGet, nil, &detail, "clients", "get", url.PathEscape(name))
+	result := detail.Client
+	result.InboundIDs = detail.InboundIDs
 	if err == nil {
 		if result.Email == "" {
 			err = &APIError{Message: "client not found"}
@@ -190,6 +217,20 @@ func (c *Client) Status(ctx context.Context) (ServerStatus, error) {
 	var result ServerStatus
 	err := c.doJSON(ctx, http.MethodGet, nil, &result, "server", "status")
 	return result, err
+}
+
+func (c *Client) RestartXray(ctx context.Context) error {
+	return c.doJSON(ctx, http.MethodPost, nil, nil, "server", "restartXrayService")
+}
+
+func (c *Client) AllSettings(ctx context.Context) (map[string]any, error) {
+	var result map[string]any
+	err := c.doJSON(ctx, http.MethodPost, nil, &result, "setting", "all")
+	return result, err
+}
+
+func (c *Client) UpdateSettings(ctx context.Context, settings map[string]any) error {
+	return c.doJSON(ctx, http.MethodPost, settings, nil, "setting", "update")
 }
 
 func (c *Client) NewX25519(ctx context.Context) (KeyPair, error) {

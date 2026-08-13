@@ -14,6 +14,7 @@ The supported target matrix is:
 |---|---|---|
 | Ubuntu 22.04 LTS | amd64, arm64 | supported |
 | Ubuntu 24.04 LTS | amd64, arm64 | supported |
+| Ubuntu 26.04 LTS | amd64, arm64 | supported |
 
 Go is selected because it produces one binary for each target architecture, has `crypto/rand`, atomic filesystem primitives, a mature HTTP client, and needs no runtime on a clean VPS.
 

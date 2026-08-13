@@ -43,8 +43,8 @@ func TestStatusReturnsDegradedExitCodeWhenXrayIsStopped(t *testing.T) {
 	if exit := command.Run(context.Background(), []string{"status"}); exit != 5 {
 		t.Fatalf("exit = %d, want 5; stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte("DEGRADED")) {
-		t.Fatalf("degraded status is missing: %q", stdout.String())
+	if !bytes.Contains(stderr.Bytes(), []byte("3x-ui is not healthy")) {
+		t.Fatalf("degraded status is missing: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
@@ -58,7 +58,9 @@ func (stoppedXrayAPI) AddClient(context.Context, xui.ClientCreate) error     { r
 func (stoppedXrayAPI) DeleteClient(context.Context, string) error            { return nil }
 func (stoppedXrayAPI) ClientLinks(context.Context, string) ([]string, error) { return nil, nil }
 func (stoppedXrayAPI) Status(context.Context) (xui.ServerStatus, error) {
-	return xui.ServerStatus{XrayState: false}, nil
+	var status xui.ServerStatus
+	status.Xray.State = "stopped"
+	return status, nil
 }
 func (stoppedXrayAPI) GetDatabase(context.Context, io.Writer, int64) error     { return nil }
 func (stoppedXrayAPI) ImportDatabase(context.Context, string, io.Reader) error { return nil }

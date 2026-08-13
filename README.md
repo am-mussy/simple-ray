@@ -4,9 +4,19 @@ Security-focused pre-release scaffold for a one-command Xray VPN installer.
 
 vpnctl installs a pinned 3x-ui release with its bundled Xray core and configures one VLESS TCP Reality inbound. The panel stays on loopback; only SSH and the VPN port are public by default.
 
-> This repository is not installable or production-ready. `install`, `update`, `restore`, and `uninstall` deliberately exit with code 3 until their security and rollback gates are implemented. Do not publish or run the bootstrap yet.
+> This repository is not ready for a public release. Direct `vpnctl install` and `uninstall` work, but the public bootstrap is blocked until publisher-authenticated release metadata exists. `update` and `restore` deliberately exit with code 3.
 
-## Planned install flow
+## Install flow
+
+Until signed GitHub Releases are available, install directly from a reviewed source checkout:
+
+```bash
+git clone https://github.com/am-mussy/simple-ray.git
+cd simple-ray
+sudo bash start.sh
+```
+
+`start.sh` downloads a checksum-pinned temporary Go toolchain, runs tests and vet, builds and atomically installs `vpnctl`, then starts the interactive wizard. It does not install Go system-wide.
 
 Download the bootstrap first if you want to inspect it:
 
@@ -22,9 +32,9 @@ After a signed release channel and VM gates exist, the intended short form is:
 curl -fsSL https://<DOMAIN>/install.sh | sudo bash
 ```
 
-The planned wizard asks for the first VPN user, shows the firewall exposure, installs pinned components and displays the QR code. It is not wired in the current build.
+The wizard asks for the first VPN user, shows the firewall exposure, installs pinned components and displays the QR code.
 
-Planned cloud-init form:
+Non-interactive form:
 
 ```bash
 sudo vpnctl install --non-interactive --mode recommended --user mustafa
@@ -39,6 +49,7 @@ sudo vpnctl qr mustafa
 |---|---|
 | Ubuntu 22.04 LTS | amd64, arm64 |
 | Ubuntu 24.04 LTS | amd64, arm64 |
+| Ubuntu 26.04 LTS | amd64, arm64 |
 
 ## Everyday commands
 
@@ -87,7 +98,7 @@ Run `sudo vpnctl doctor`. It separates system, network, service and configuratio
 sudo vpnctl uninstall
 ```
 
-Uninstall is fail-closed in the current build. The intended implementation will remove only inventory-owned resources and keep backups by default.
+Uninstall removes only inventory-owned resources and keeps backups by default. Use `--remove-backups` to remove them too. The `vpnctl` executable is retained because it is owned by the bootstrap/release layer, not the managed VPN inventory.
 
 ## Security
 
@@ -95,4 +106,4 @@ Read [SECURITY.md](SECURITY.md). The current bootstrap verifies checksums but do
 
 ## Current validation status
 
-Local compilation and automated tests are necessary but insufficient. A production release additionally requires the full Ubuntu 22.04/24.04 × amd64/arm64 provisioning matrix, reboot and rollback tests, external IPv4/IPv6 scans, and a second independent security audit with no open Critical/High findings.
+Local compilation and automated tests are necessary but insufficient. A production release additionally requires the full Ubuntu 22.04/24.04/26.04 × amd64/arm64 provisioning matrix, reboot and rollback tests, external IPv4/IPv6 scans, and a second independent security audit with no open Critical/High findings.
