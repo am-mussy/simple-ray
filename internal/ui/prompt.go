@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 var (
@@ -62,12 +63,15 @@ func (p *LinePrompter) Input(label, defaultValue string, validate func(string) e
 }
 
 func normalizePromptValue(value string) string {
-	value = strings.TrimSpace(value)
+	trim := func(r rune) bool {
+		return unicode.IsSpace(r) || r == '\u200b' || r == '\ufeff'
+	}
+	value = strings.TrimFunc(value, trim)
 	const bracketedPasteStart = "\x1b[200~"
 	const bracketedPasteEnd = "\x1b[201~"
-	if strings.HasPrefix(value, bracketedPasteStart) && strings.HasSuffix(value, bracketedPasteEnd) {
+	for strings.HasPrefix(value, bracketedPasteStart) && strings.HasSuffix(value, bracketedPasteEnd) {
 		value = strings.TrimSuffix(strings.TrimPrefix(value, bracketedPasteStart), bracketedPasteEnd)
-		value = strings.TrimSpace(value)
+		value = strings.TrimFunc(value, trim)
 	}
 	return value
 }

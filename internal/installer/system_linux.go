@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -244,19 +245,46 @@ func ufwAllows(status string, port int) bool {
 	return false
 }
 
-func detectSSHPort(explicit int) (int, error) {
-	if explicit > 0 && explicit <= 65535 {
+func detectSSHPort(ctx context.Context, runner Runner, explicit int) (int, error) {
+	connectionPort, connected, err := sshConnectionPort()
+	if err != nil {
+		return 0, err
+	}
+	if explicit < 0 || explicit > 65535 {
+		return 0, errors.New("SSH listener port is invalid")
+	}
+	if explicit > 0 {
+		if connected && connectionPort != explicit {
+			return 0, errors.New("--ssh-port does not match the active SSH connection")
+		}
 		return explicit, nil
 	}
+	if connected {
+		return connectionPort, nil
+	}
+	ports, err := sshListenerPorts(ctx, runner)
+	if err != nil {
+		return 0, err
+	}
+	if len(ports) == 1 {
+		return ports[0], nil
+	}
+	if len(ports) > 1 {
+		return 0, errors.New("multiple SSH listeners detected; pass --ssh-port")
+	}
+	return 0, errors.New("SSH listener could not be detected; pass --ssh-port")
+}
+
+func sshConnectionPort() (int, bool, error) {
 	fields := strings.Fields(os.Getenv("SSH_CONNECTION"))
 	if len(fields) != 4 {
-		return 0, errors.New("SSH listener could not be detected; pass --ssh-port")
+		return 0, false, nil
 	}
 	port, err := strconv.Atoi(fields[3])
 	if err != nil || port < 1 || port > 65535 {
-		return 0, errors.New("SSH listener port is invalid")
+		return 0, false, errors.New("SSH listener port is invalid")
 	}
-	return port, nil
+	return port, true, nil
 }
 
 func requiredTools(ctx context.Context, runner Runner) error {
@@ -279,30 +307,54 @@ func requiredTools(ctx context.Context, runner Runner) error {
 }
 
 func verifySSHListener(ctx context.Context, runner Runner, port int) error {
-	fields := strings.Fields(os.Getenv("SSH_CONNECTION"))
-	if len(fields) != 4 {
-		return errors.New("active SSH connection could not be verified")
+	connectionPort, connected, err := sshConnectionPort()
+	if err != nil {
+		return err
 	}
-	connectionPort, err := strconv.Atoi(fields[3])
-	if err != nil || connectionPort != port {
+	if connected && connectionPort != port {
 		return errors.New("--ssh-port does not match the active SSH connection")
 	}
-	output, err := runner.Run(ctx, "ss", "-H", "-ltn")
+	ports, err := sshListenerPorts(ctx, runner)
 	if err != nil {
-		return errors.New("SSH listeners could not be inspected")
+		return err
 	}
-	wanted := strconv.Itoa(port)
+	for _, candidate := range ports {
+		if candidate == port {
+			return nil
+		}
+	}
+	return errors.New("active SSH port is not listening")
+}
+
+func sshListenerPorts(ctx context.Context, runner Runner) ([]int, error) {
+	output, err := runner.Run(ctx, "ss", "-H", "-ltnp")
+	if err != nil {
+		return nil, errors.New("SSH listeners could not be inspected")
+	}
+	unique := map[int]struct{}{}
 	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, `"sshd"`) {
+			continue
+		}
 		parts := strings.Fields(line)
 		if len(parts) < 4 {
 			continue
 		}
 		separator := strings.LastIndexByte(parts[3], ':')
-		if separator >= 0 && parts[3][separator+1:] == wanted {
-			return nil
+		if separator < 0 {
+			continue
+		}
+		port, conversionErr := strconv.Atoi(parts[3][separator+1:])
+		if conversionErr == nil && port >= 1 && port <= 65535 {
+			unique[port] = struct{}{}
 		}
 	}
-	return errors.New("active SSH port is not listening")
+	ports := make([]int, 0, len(unique))
+	for port := range unique {
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports, nil
 }
 
 func bootstrapPanel(ctx context.Context, runner Runner, executable, binary, namespace, username, password string) error {

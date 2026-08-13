@@ -84,11 +84,39 @@ func TestFirewallRemoveRefusesAdministratorDrift(t *testing.T) {
 
 func TestVerifySSHListenerRejectsWrongExplicitPort(t *testing.T) {
 	t.Setenv("SSH_CONNECTION", "192.0.2.10 54321 198.51.100.20 22")
-	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltn": []byte("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n")}}
+	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltnp": []byte("LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n")}}
 	if err := verifySSHListener(context.Background(), runner, 2222); err == nil {
 		t.Fatal("wrong explicit SSH port was accepted")
 	}
 	if err := verifySSHListener(context.Background(), runner, 22); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDetectSSHPortFromListenerWithoutSSHEnvironment(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltnp": []byte("LISTEN 0 128 0.0.0.0:10050 0.0.0.0:* users:((\"zabbix_agentd\",pid=2,fd=4))\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\nLISTEN 0 128 [::]:22 [::]:* users:((\"sshd\",pid=1,fd=4))\n")}}
+	port, err := detectSSHPort(context.Background(), runner, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != 22 {
+		t.Fatalf("port = %d, want 22", port)
+	}
+}
+
+func TestDetectSSHPortRejectsAmbiguousListenersWithoutExplicitPort(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltnp": []byte("LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\nLISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:((\"sshd\",pid=1,fd=4))\n")}}
+	if _, err := detectSSHPort(context.Background(), runner, 0); err == nil || !strings.Contains(err.Error(), "multiple SSH listeners") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestVerifySSHListenerAcceptsExplicitListenerWithoutSSHEnvironment(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	runner := &fakeRunner{responses: map[string][]byte{"ss -H -ltnp": []byte("LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n")}}
+	if err := verifySSHListener(context.Background(), runner, 2222); err != nil {
 		t.Fatal(err)
 	}
 }

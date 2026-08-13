@@ -160,7 +160,7 @@ func (m *Manager) Install(ctx context.Context, request Request) (result Result, 
 	if request.ListenPort < 1 || request.ListenPort > 65535 {
 		return result, errors.New("VPN port is invalid")
 	}
-	request.SSHPort, err = detectSSHPort(request.SSHPort)
+	request.SSHPort, err = detectSSHPort(ctx, m.Runner, request.SSHPort)
 	if err != nil {
 		return result, err
 	}

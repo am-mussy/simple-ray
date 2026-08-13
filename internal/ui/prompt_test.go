@@ -107,7 +107,7 @@ func TestPromptSanitizesLabelsAndValidationErrors(t *testing.T) {
 }
 
 func TestInputAcceptsBracketedPaste(t *testing.T) {
-	input := strings.NewReader("\x1b[200~mussy\x1b[201~\n")
+	input := strings.NewReader("\ufeff\x1b[200~\x1b[200~mussy\x1b[201~\x1b[201~\u200b\n")
 	prompter := NewPrompter(input, &bytes.Buffer{}, true)
 	value, err := prompter.Input("Name", "", nil)
 	if err != nil {
