@@ -2,6 +2,16 @@ package domain
 
 import "testing"
 
+func TestValidateUserNameAcceptsSimpleASCIIName(t *testing.T) {
+	name, err := ValidateUserName("mussy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "mussy" {
+		t.Fatalf("name = %q", name)
+	}
+}
+
 func TestValidateStateRejectsUnprivilegedPanelPort(t *testing.T) {
 	state := validDomainState()
 	state.PanelPort = 2053

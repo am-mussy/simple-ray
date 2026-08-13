@@ -45,7 +45,7 @@ func (p *LinePrompter) Input(label, defaultValue string, validate func(string) e
 		if err != nil {
 			return "", err
 		}
-		value = strings.TrimSpace(value)
+		value = normalizePromptValue(value)
 		if value == "" {
 			value = defaultValue
 		}
@@ -59,6 +59,17 @@ func (p *LinePrompter) Input(label, defaultValue string, validate func(string) e
 		}
 		return value, nil
 	}
+}
+
+func normalizePromptValue(value string) string {
+	value = strings.TrimSpace(value)
+	const bracketedPasteStart = "\x1b[200~"
+	const bracketedPasteEnd = "\x1b[201~"
+	if strings.HasPrefix(value, bracketedPasteStart) && strings.HasSuffix(value, bracketedPasteEnd) {
+		value = strings.TrimSuffix(strings.TrimPrefix(value, bracketedPasteStart), bracketedPasteEnd)
+		value = strings.TrimSpace(value)
+	}
+	return value
 }
 
 func (p *LinePrompter) Confirm(label string, defaultValue bool) (bool, error) {

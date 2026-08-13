@@ -105,3 +105,15 @@ func TestPromptSanitizesLabelsAndValidationErrors(t *testing.T) {
 		t.Fatalf("prompt contains terminal escape: %q", output.String())
 	}
 }
+
+func TestInputAcceptsBracketedPaste(t *testing.T) {
+	input := strings.NewReader("\x1b[200~mussy\x1b[201~\n")
+	prompter := NewPrompter(input, &bytes.Buffer{}, true)
+	value, err := prompter.Input("Name", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "mussy" {
+		t.Fatalf("value = %q", value)
+	}
+}

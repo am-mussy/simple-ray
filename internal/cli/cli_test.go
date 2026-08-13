@@ -48,6 +48,31 @@ func TestStatusReturnsDegradedExitCodeWhenXrayIsStopped(t *testing.T) {
 	}
 }
 
+func TestDetectPublicAddressFallsBackWhenSSHUsesPrivateAddress(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "192.0.2.10 54321 10.0.0.5 22")
+	command := CLI{PublicAddressLookup: func(context.Context) (string, error) {
+		return "203.0.113.10", nil
+	}}
+	if address := command.detectPublicAddress(context.Background()); address != "203.0.113.10" {
+		t.Fatalf("address = %q", address)
+	}
+}
+
+func TestDetectPublicAddressPrefersPublicSSHAddress(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "192.0.2.10 54321 198.51.100.20 22")
+	called := false
+	command := CLI{PublicAddressLookup: func(context.Context) (string, error) {
+		called = true
+		return "203.0.113.10", nil
+	}}
+	if address := command.detectPublicAddress(context.Background()); address != "198.51.100.20" {
+		t.Fatalf("address = %q", address)
+	}
+	if called {
+		t.Fatal("external lookup was used despite a public SSH address")
+	}
+}
+
 type stoppedXrayAPI struct{}
 
 func (stoppedXrayAPI) ListClients(context.Context) ([]xui.ClientRecord, error) { return nil, nil }

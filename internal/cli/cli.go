@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 
@@ -32,11 +34,12 @@ type Options struct {
 }
 
 type CLI struct {
-	Service *app.Service
-	In      io.Reader
-	Out     io.Writer
-	Err     io.Writer
-	IsTTY   bool
+	Service             *app.Service
+	In                  io.Reader
+	Out                 io.Writer
+	Err                 io.Writer
+	IsTTY               bool
+	PublicAddressLookup func(context.Context) (string, error)
 }
 
 type errorResult struct {
@@ -126,7 +129,7 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 	}
 	interactive := opts.Interactive || c.IsTTY && !opts.NonInteractive
 	if interactive {
-		if err := c.installWizard(user, serverName, publicAddress, listenPort, sshPort, realitySNI, realityTarget, mode, opts.Yes); err != nil {
+		if err := c.installWizard(ctx, user, serverName, publicAddress, listenPort, sshPort, realitySNI, realityTarget, mode, opts.Yes); err != nil {
 			return err
 		}
 	}
@@ -134,7 +137,7 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 		return usage("--user is required")
 	}
 	if *publicAddress == "" {
-		*publicAddress = publicAddressFromSSH()
+		*publicAddress = c.detectPublicAddress(ctx)
 	}
 	if *publicAddress == "" {
 		return domain.E("PUBLIC_ADDRESS_REQUIRED", "public address could not be detected from SSH", "Pass --public-address <IP>", 3, nil)
@@ -157,7 +160,7 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 	return nil
 }
 
-func (c *CLI) installWizard(user, serverName, publicAddress *string, listenPort, sshPort *int, realitySNI, realityTarget, mode *string, confirmed bool) error {
+func (c *CLI) installWizard(ctx context.Context, user, serverName, publicAddress *string, listenPort, sshPort *int, realitySNI, realityTarget, mode *string, confirmed bool) error {
 	if c.In == nil {
 		return domain.E("TTY_REQUIRED", "interactive input is unavailable", "Use --non-interactive with required flags", 3, nil)
 	}
@@ -180,11 +183,14 @@ func (c *CLI) installWizard(user, serverName, publicAddress *string, listenPort,
 		*serverName = hostname
 	}
 	if *publicAddress == "" {
-		*publicAddress = publicAddressFromSSH()
+		*publicAddress = c.detectPublicAddress(ctx)
 	}
 	validateName := func(value string) error { _, err := domain.ValidateUserName(value); return err }
 	if *mode == "recommended" {
 		*user, err = prompter.Input("Create your first VPN user", "vpn", validateName)
+		if err == nil && *publicAddress == "" {
+			*publicAddress, err = prompter.Input("Public IP", "", validateIP)
+		}
 	} else {
 		*serverName, err = prompter.Input("Server name", *serverName, requireText)
 		if err == nil {
@@ -226,6 +232,62 @@ func (c *CLI) installWizard(user, serverName, publicAddress *string, listenPort,
 		return domain.E("INSTALL_CANCELLED", "installation was cancelled", "No system changes were made", 130, err)
 	}
 	return nil
+}
+
+func (c *CLI) detectPublicAddress(ctx context.Context) string {
+	if address := publicAddressFromSSH(); address != "" {
+		return address
+	}
+	lookup := c.PublicAddressLookup
+	if lookup == nil {
+		lookup = lookupPublicAddress
+	}
+	address, err := lookup(ctx)
+	if err != nil {
+		return ""
+	}
+	return address
+}
+
+func lookupPublicAddress(ctx context.Context) (string, error) {
+	requestContext, cancel := context.WithTimeout(ctx, 7*time.Second)
+	defer cancel()
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		DisableKeepAlives:     true,
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("public address endpoint redirected")
+		},
+	}
+	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, "https://api64.ipify.org", nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("public address endpoint returned HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 65))
+	if err != nil || len(data) > 64 {
+		return "", errors.New("public address response is invalid")
+	}
+	address := net.ParseIP(strings.TrimSpace(string(data)))
+	if address == nil || !address.IsGlobalUnicast() || address.IsPrivate() {
+		return "", errors.New("public address response is not a public IP")
+	}
+	return address.String(), nil
 }
 
 func publicAddressFromSSH() string {
