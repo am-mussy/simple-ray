@@ -205,8 +205,8 @@ Create with `POST /panel/api/inbounds/add`. Nested JSON objects are preferred in
     "realitySettings": {
       "show": false,
       "xver": 0,
-      "target": "www.microsoft.com:443",
-      "serverNames": ["www.microsoft.com"],
+      "target": "www.cloudflare.com:443",
+      "serverNames": ["www.cloudflare.com"],
       "privateKey": "<server-private-key>",
       "minClientVer": "",
       "maxClientVer": "",

@@ -146,7 +146,7 @@ func (m *Manager) Install(ctx context.Context, request Request) (result Result, 
 		request.ListenPort = 443
 	}
 	if request.RealitySNI == "" {
-		request.RealitySNI = "www.microsoft.com"
+		request.RealitySNI = "www.cloudflare.com"
 	}
 	if request.RealityTarget == "" {
 		request.RealityTarget = request.RealitySNI + ":443"
@@ -411,6 +411,9 @@ func (m *Manager) Install(ctx context.Context, request Request) (result Result, 
 	}
 	if err := waitAPIHealth(ctx, api); err != nil {
 		return result, errors.New("Xray failed health check")
+	}
+	if err := verifyRealityTunnel(ctx, filepath.Join(programDir, "bin", "xray-linux-"+check.Architecture), verified.ID, request.PublicAddress, request.ListenPort, request.RealitySNI, keys.PublicKey, shortID); err != nil {
+		return result, fmt.Errorf("Reality tunnel failed end-to-end health check: %w", err)
 	}
 	unitSum := sha256.Sum256([]byte(unit))
 	now := time.Now().UTC()
