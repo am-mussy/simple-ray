@@ -6,6 +6,45 @@ Start with:
 sudo vpnctl doctor
 ```
 
+## The client connects but no traffic flows
+
+This is the characteristic Reality failure and the hardest to read, because
+nothing looks broken. When the server cannot authenticate a client it does not
+refuse the connection — it relays that client to the decoy site. The app shows
+a healthy tunnel, the handshake succeeds against a genuine certificate, and no
+byte reaches the internet. Client logs name it directly:
+
+```
+REALITY: received real certificate (potential MITM or redirection)
+```
+
+Work through it in this order.
+
+1. Run `sudo vpnctl doctor`. The tunnel check pushes real traffic through the
+   link a user is given. If it fails, the server side is at fault and the check
+   names the next action.
+2. If doctor is green, re-import the link. `sudo vpnctl qr <name>` emits a
+   canonical link on every call; a profile edited by hand or imported from an
+   older link may carry a stale fingerprint, a missing `flow`, or a `type` the
+   client core does not understand. Any of the three produces exactly this
+   symptom.
+3. If a re-imported link still carries nothing on one device while other
+   devices work, hand that device another uTLS profile:
+
+   ```bash
+   sudo vpnctl qr phone --fingerprint chrome
+   ```
+
+   Available profiles are `safari` (default), `chrome`, `firefox`, `ios` and
+   `edge`. All five are verified against the Xray cores client apps embed, but
+   an individual app build or carrier path can still reject one of them, and no
+   check on the server can predict which.
+
+Note that a green doctor is not a promise that every client app will work.
+The probe dials the server's own address, which the kernel routes over
+loopback, so it proves the server and says nothing about a phone's network
+path.
+
 ## Xray or 3x-ui is not running
 
 Inspect the safe summary from `vpnctl doctor`, then the service journal:

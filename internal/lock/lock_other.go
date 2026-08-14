@@ -15,7 +15,7 @@ func acquire(path, operation string) (*Lock, error) {
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if errors.Is(err, os.ErrExist) {
-		return nil, fmt.Errorf("another vpnctl mutation is active (%s)", operation)
+		return nil, fmt.Errorf("%w (%s)", ErrBusy, operation)
 	}
 	if err != nil {
 		return nil, err

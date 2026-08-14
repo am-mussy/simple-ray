@@ -157,7 +157,7 @@ func (c *CLI) install(ctx context.Context, opts Options, args []string) error {
 	}
 	fmt.Fprintf(c.Out, "Установка завершена.\nАдрес: %s\nПротокол: VLESS TCP Reality\nПользователь: %s\nПоказать конфигурацию клиента: sudo vpnctl qr %s\n", result.State.PublicAddress, result.User.Name, result.User.Name)
 	if interactive {
-		return c.showUser(ctx, opts, result.User.Name, true)
+		return c.showUser(ctx, opts, result.User.Name, "", true)
 	}
 	return nil
 }
@@ -420,7 +420,7 @@ func (c *CLI) user(ctx context.Context, opts Options, args []string) error {
 			fmt.Fprintf(c.Out, "Пользователь %q создан.\n", user.Name)
 		}
 		if *show || (c.IsTTY && !opts.NonInteractive) {
-			return c.showUser(ctx, opts, user.Name, true)
+			return c.showUser(ctx, opts, user.Name, "", true)
 		}
 		fmt.Fprintf(c.Out, "Показать конфигурацию клиента: sudo vpnctl qr %s\n", user.Name)
 		return nil
@@ -457,17 +457,20 @@ func (c *CLI) user(ctx context.Context, opts Options, args []string) error {
 		}
 		return nil
 	case "show":
-		if len(args) != 2 {
-			return usage("использование: vpnctl user show <имя>")
+		set := newFlagSet("user show")
+		fingerprint := set.String("fingerprint", "", "профиль uTLS в ссылке")
+		positionals, err := parseSet(set, args[1:])
+		if err != nil || len(positionals) != 1 {
+			return usage("использование: vpnctl user show <имя> [--fingerprint " + strings.Join(domain.SupportedFingerprints, "|") + "]")
 		}
-		return c.showUser(ctx, opts, args[1], c.IsTTY)
+		return c.showUser(ctx, opts, positionals[0], *fingerprint, c.IsTTY)
 	default:
 		return usage(fmt.Sprintf("неизвестная подкоманда user %q", args[0]))
 	}
 }
 
-func (c *CLI) showUser(ctx context.Context, opts Options, name string, decorated bool) error {
-	user, link, err := c.Service.UserLink(ctx, name)
+func (c *CLI) showUser(ctx context.Context, opts Options, name, fingerprint string, decorated bool) error {
+	user, link, err := c.Service.UserLink(ctx, name, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -485,10 +488,11 @@ func (c *CLI) showUser(ctx context.Context, opts Options, name string, decorated
 func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 	set := newFlagSet("qr")
 	format := set.String("format", "", "terminal или uri")
+	fingerprint := set.String("fingerprint", "", "профиль uTLS в ссылке")
 	set.Bool("compact", false, "компактный QR-код в терминале")
 	positionals, err := parseSet(set, args)
 	if err != nil || len(positionals) != 1 {
-		return usage("использование: vpnctl qr <имя> [--format terminal|uri] [--compact]")
+		return usage("использование: vpnctl qr <имя> [--format terminal|uri] [--compact] [--fingerprint " + strings.Join(domain.SupportedFingerprints, "|") + "]")
 	}
 	if *format == "" {
 		if c.IsTTY {
@@ -503,7 +507,7 @@ func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 	if *format == "terminal" && !c.IsTTY {
 		return domain.E("TTY_REQUIRED", "для вывода QR нужен терминал", "Используй --format uri", 3, nil)
 	}
-	_, link, err := c.Service.UserLink(ctx, positionals[0])
+	_, link, err := c.Service.UserLink(ctx, positionals[0], *fingerprint)
 	if err != nil {
 		return err
 	}
@@ -516,36 +520,62 @@ func (c *CLI) qr(ctx context.Context, opts Options, args []string) error {
 }
 
 func (c *CLI) doctor(ctx context.Context, opts Options, args []string) error {
-	if len(args) != 0 {
-		return usage("автоматическое исправление doctor пока недоступно")
+	set := newFlagSet("doctor")
+	quick := set.Bool("quick", false, "пропустить сквозную проверку трафика")
+	positionals, err := parseSet(set, args)
+	if err != nil || len(positionals) != 0 {
+		return usage("использование: vpnctl doctor [--quick]")
 	}
-	checks := c.Service.Doctor(ctx)
-	failed := 0
+	checks := c.Service.Doctor(ctx, *quick)
+	failed, warned := 0, 0
 	for _, check := range checks {
-		if check.Status == "failed" {
+		switch check.Status {
+		case "failed":
 			failed++
+		case "unavailable":
+			warned++
 		}
 	}
 	if opts.Output == "json" {
-		if err := writeJSON(c.Out, map[string]any{"ok": failed == 0, "checks": checks, "passed": len(checks) - failed, "failed": failed}); err != nil {
+		if err := writeJSON(c.Out, map[string]any{"ok": failed == 0, "checks": checks, "passed": len(checks) - failed - warned, "warned": warned, "failed": failed}); err != nil {
 			return err
 		}
-	} else {
-		fmt.Fprintln(c.Out, "Диагностика VPNCTL")
-		group := ""
-		for _, check := range checks {
-			if check.Group != group {
-				group = check.Group
-				fmt.Fprintf(c.Out, "\n%s\n", group)
-			}
-			fmt.Fprintf(c.Out, "  %s %s\n", checkMark(check.Status), check.Name)
+		if failed > 0 {
+			return silentExit(5)
 		}
-		fmt.Fprintf(c.Out, "\nРезультат\n  успешно: %d, ошибок: %d\n", len(checks)-failed, failed)
+		return nil
 	}
-	if failed > 0 {
-		return silentExit(5)
+
+	fmt.Fprintln(c.Out, "Диагностика VPNCTL")
+	group := ""
+	for _, check := range checks {
+		if check.Group != group {
+			group = check.Group
+			fmt.Fprintf(c.Out, "\n%s\n", group)
+		}
+		fmt.Fprintf(c.Out, "  %s %s\n", checkMark(check.Status), check.Name)
+		// The reason and the next action are the whole point of doctor for
+		// someone who does not know how Reality works.
+		if check.Reason != "" && check.Status != "passed" {
+			fmt.Fprintf(c.Out, "      причина: %s\n", check.Reason)
+		}
+		if check.Hint != "" {
+			fmt.Fprintf(c.Out, "      что делать: %s\n", check.Hint)
+		}
 	}
-	return nil
+	fmt.Fprintf(c.Out, "\nРезультат\n  успешно: %d, предупреждений: %d, ошибок: %d\n", len(checks)-failed-warned, warned, failed)
+	if failed == 0 {
+		// Only the end-to-end probe proves traffic actually flows, so the
+		// reassuring message must not appear when it was skipped.
+		if tunnelVerified(checks) {
+			fmt.Fprintln(c.Out, "\nVPN работает: трафик проверен. Ссылка для подключения: sudo vpnctl qr <имя>")
+		} else {
+			fmt.Fprintln(c.Out, "\nПроверки пройдены, но трафик не проверялся. Полная проверка: sudo vpnctl doctor")
+		}
+		return nil
+	}
+	fmt.Fprintln(c.Out, "\nСначала выполни действия из блока «что делать» выше, затем повтори: sudo vpnctl doctor")
+	return silentExit(5)
 }
 
 func (c *CLI) backup(ctx context.Context, opts Options, args []string) error {
@@ -746,6 +776,17 @@ func enabledState(value bool) string {
 	}
 	return "отключён"
 }
+
+// tunnelVerified reports whether real traffic was pushed through the tunnel.
+func tunnelVerified(checks []domain.Check) bool {
+	for _, check := range checks {
+		if check.Group == "Туннель" {
+			return check.Status == "passed"
+		}
+	}
+	return false
+}
+
 func checkMark(status string) string {
 	if status == "passed" {
 		return "OK"
@@ -762,8 +803,8 @@ const helpText = `vpnctl управляет VPN-сервером VLESS TCP Reali
   vpnctl install
   vpnctl status
   vpnctl user add|remove|list|show
-  vpnctl qr <name>
-  vpnctl doctor
+  vpnctl qr <name> [--fingerprint <профиль>]
+  vpnctl doctor [--quick]
   vpnctl backup --plaintext
   vpnctl restore <backup> --yes
   vpnctl update

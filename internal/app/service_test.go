@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"testing"
 
@@ -25,41 +24,8 @@ func TestUserLinkEmptyResultDoesNotPanic(t *testing.T) {
 	}
 	service := New(store, filepath.Join(t.TempDir(), "lock"))
 	service.APIFactory = func(domain.State, domain.Secrets) (API, error) { return emptyLinksAPI{}, nil }
-	if _, _, err := service.UserLink(context.Background(), "alice"); err == nil {
+	if _, _, err := service.UserLink(context.Background(), "alice", ""); err == nil {
 		t.Fatal("expected empty link response to fail")
-	}
-}
-
-func TestPublicClientLinkUsesManagedEndpointAndCompatibleEncryption(t *testing.T) {
-	raw := "vless://12345678-1234-1234-1234-123456789abc@localhost:443?flow=xtls-rprx-vision&security=reality&pbk=public-key&sid=abcdef0123456789&spx=/path&type=tcp#vpn"
-	result, err := publicClientLink(raw, "203.0.113.10", 8443)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Host != "203.0.113.10:8443" {
-		t.Fatalf("host = %q", parsed.Host)
-	}
-	if parsed.Query().Get("encryption") != "none" || parsed.Query().Get("pbk") != "public-key" || parsed.Query().Get("spx") != "/path" {
-		t.Fatalf("query = %q", parsed.RawQuery)
-	}
-}
-
-func TestPublicClientLinkFormatsIPv6(t *testing.T) {
-	raw := "vless://12345678-1234-1234-1234-123456789abc@localhost:443?security=reality"
-	result, err := publicClientLink(raw, "2001:db8::1", 443)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Host != "[2001:db8::1]:443" {
-		t.Fatalf("host = %q", parsed.Host)
 	}
 }
 
@@ -71,14 +37,16 @@ func TestUserLookupDoesNotMisreportAPIOutageAsNotFound(t *testing.T) {
 	if err := store.SaveSecrets(domain.Secrets{SchemaVersion: domain.SchemaVersion, APIToken: "token"}); err != nil {
 		t.Fatal(err)
 	}
-	service := New(store, filepath.Join(t.TempDir(), "lock"))
+	// Point at a directory vpnctl creates itself: t.TempDir() applies the
+	// process umask, so its own permissions are not the 0700 the lock demands.
+	service := New(store, filepath.Join(t.TempDir(), "runtime", "lock"))
 	service.APIFactory = func(domain.State, domain.Secrets) (API, error) { return unavailableGetAPI{}, nil }
 	tests := []struct {
 		name string
 		run  func() error
 	}{
 		{name: "remove", run: func() error { _, err := service.RemoveUser(context.Background(), "alice"); return err }},
-		{name: "show", run: func() error { _, _, err := service.UserLink(context.Background(), "alice"); return err }},
+		{name: "show", run: func() error { _, _, err := service.UserLink(context.Background(), "alice", ""); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

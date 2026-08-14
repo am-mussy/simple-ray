@@ -1,14 +1,16 @@
 # vpnctl
 
-Security-focused pre-release scaffold for a one-command Xray VPN installer.
+*[English version](README.en.md)*
 
-vpnctl installs a pinned 3x-ui release with its bundled Xray core and configures one VLESS TCP Reality inbound. The panel stays on loopback; only SSH and the VPN port are public by default.
+Установщик VPN на Xray, собранный вокруг безопасных умолчаний. Пока это pre-release.
 
-> This repository is not ready for a public release. Direct `vpnctl install` and `uninstall` work, but the public bootstrap is blocked until publisher-authenticated release metadata exists. `update` and `restore` deliberately exit with code 3.
+vpnctl ставит зафиксированный релиз 3x-ui вместе с его ядром Xray и настраивает одно подключение VLESS TCP Reality. Панель остаётся на loopback, наружу по умолчанию открыты только SSH и порт VPN.
 
-## Install flow
+> Репозиторий ещё не готов к публичному релизу. `vpnctl install` и `uninstall` работают, но публичный bootstrap заблокирован, пока нет метаданных релиза с подтверждённым издателем. `update` и `restore` намеренно завершаются с кодом 3.
 
-Until signed GitHub Releases are available, install directly from a reviewed source checkout:
+## Установка
+
+Пока нет подписанных GitHub Releases, ставить нужно из проверенного исходного кода:
 
 ```bash
 git clone https://github.com/am-mussy/simple-ray.git
@@ -16,9 +18,9 @@ cd simple-ray
 bash start.sh
 ```
 
-`start.sh` downloads a checksum-pinned temporary Go toolchain, runs tests, vet and the build without root privileges, elevates only for the atomic install and system setup, then starts the interactive wizard. It does not install Go system-wide.
+`start.sh` скачивает временный Go с проверкой контрольной суммы, прогоняет тесты, `vet` и сборку без прав root, повышает права только на атомарную установку и настройку системы, затем запускает интерактивный wizard. Go в систему не устанавливается.
 
-Download the bootstrap first if you want to inspect it:
+Если хочешь сначала прочитать bootstrap:
 
 ```bash
 curl -fSLo install.sh https://<DOMAIN>/install.sh
@@ -26,84 +28,98 @@ less install.sh
 sudo bash install.sh
 ```
 
-After a signed release channel and VM gates exist, the intended short form is:
+Короткая форма появится после того, как будут подписанный канал релизов и VM-гейты:
 
 ```bash
 curl -fsSL https://<DOMAIN>/install.sh | sudo bash
 ```
 
-The wizard asks for the first VPN user, shows the firewall exposure, installs pinned components and displays the QR code.
+Wizard спрашивает имя первого VPN-пользователя, показывает, что именно будет открыто в firewall, ставит зафиксированные компоненты и выводит QR-код.
 
-Non-interactive form:
+Без интерактива:
 
 ```bash
 sudo vpnctl install --non-interactive --mode recommended --user mustafa
 sudo vpnctl qr mustafa
 ```
 
-`vpnctl qr` prints sensitive client configuration. Do not send it to shared logs.
+`vpnctl qr` печатает рабочую конфигурацию клиента. Не отправляй её в общие логи.
 
-## Supported systems
+## Поддерживаемые системы
 
-| OS | Architecture |
+| ОС | Архитектура |
 |---|---|
 | Ubuntu 22.04 LTS | amd64, arm64 |
 | Ubuntu 24.04 LTS | amd64, arm64 |
 | Ubuntu 26.04 LTS | amd64, arm64 |
 
-## Everyday commands
+## Повседневные команды
 
 ```bash
 sudo vpnctl status
 sudo vpnctl doctor
+sudo vpnctl doctor --quick
 sudo vpnctl user add phone
 sudo vpnctl user list
 sudo vpnctl qr phone
+sudo vpnctl qr phone --fingerprint chrome
 sudo vpnctl user remove phone
 ```
 
-User commands require existing valid vpnctl state and verify membership in the managed inbound.
+Команды управления пользователями требуют корректного состояния vpnctl и проверяют, что пользователь принадлежит управляемому подключению.
 
-## Backup and restore
+## Ссылка для клиента
+
+`vpnctl qr` не отдаёт то, что сгенерировал 3x-ui. Он переписывает URI в канонический вид: один и тот же пользователь всегда получает одну и ту же ссылку, и все поля, нужные клиенту, проставлены проверенными значениями — `flow=xtls-rprx-vision`, `type=tcp`, `encryption=none`, `spx=/` и закреплённый профиль uTLS.
+
+Любое из этих полей, оставленное на самотёк, даёт один и тот же отказ: **туннель подключается и не передаёт трафик**. Поэтому ни одно из них не наследуется от панели.
+
+Профиль по умолчанию — `safari`. Флаг `--fingerprint` выдаёт устройству другой профиль, если приложение подключается, но трафик не идёт; доступны `chrome`, `firefox`, `ios` и `edge`. Профили вне этого списка команда отклоняет, а не выдаёт: они не проходят рукопожатие Reality хотя бы на одном распространённом ядре. Проверенная матрица и её границы — в [docs/client-compatibility.md](docs/client-compatibility.md).
+
+## Резервные копии
 
 ```bash
 sudo vpnctl backup --plaintext
 sudo vpnctl restore /var/lib/vpnctl/backups/vpnctl-backup-YYYYMMDD-HHMMSS.tar.gz
 ```
 
-Backups are root-readable and contain VPN and panel secrets. The MVP archive is not encrypted; encrypt it with an audited external tool before moving it off the server.
+Копия читается только root и содержит секреты VPN и панели. Архив MVP не зашифрован — шифруй его проверенным внешним инструментом до того, как унести с сервера.
 
-Restore is fail-closed in the current development build. It will be enabled only after an offline service-level transaction can prove rollback even when the restored database changes the panel token, port, or base path.
+`restore` в текущей сборке отключён fail-closed. Он будет включён только когда offline-транзакция уровня сервиса сможет доказать откат даже в случае, когда восстановленная база меняет токен панели, порт или base path.
 
-## Panel access
+## Доступ к панели
 
-The panel binds to `127.0.0.1`. Open an SSH tunnel from your computer using the panel port printed by `vpnctl status`, then use the local forwarded address. vpnctl does not expose plain HTTP administration to the internet.
+Панель слушает `127.0.0.1`. Открой SSH-туннель со своей машины на порт панели, который печатает `vpnctl status`, и работай через локальный проброшенный адрес. vpnctl не выставляет административный HTTP в интернет.
 
-## Update
+## Обновление
 
 ```bash
 sudo vpnctl update --check
 sudo vpnctl update --version <version>
 ```
 
-Update is fail-closed in the current build. The intended design uses explicit versions, verified artifacts, backup, health checks and rollback; silent updates and `latest` are forbidden.
+`update` в текущей сборке отключён fail-closed. Задуманная схема — явные версии, проверенные артефакты, резервная копия, health-проверки и откат. Тихие обновления и `latest` запрещены.
 
-## Troubleshooting
+## Диагностика
 
-Run `sudo vpnctl doctor`. It separates system, network, service and configuration checks and gives a safe next action. See [docs/troubleshooting.md](docs/troubleshooting.md) for common failures.
+Запусти `sudo vpnctl doctor`. Он разделяет проверки на системные, сетевые, сервисные и конфигурационные и на каждую ошибку даёт безопасное следующее действие. Частые отказы разобраны в [docs/troubleshooting.md](docs/troubleshooting.md), начиная с самого непрозрачного — «подключение есть, трафика нет».
 
-## Uninstall
+Учти предел: сквозная проба ходит на собственный публичный адрес сервера, а его ядро роутит через loopback. Зелёный `doctor` доказывает серверную сторону и ничего не говорит про сетевой путь телефона.
+
+## Удаление
 
 ```bash
 sudo vpnctl uninstall
 ```
 
-Uninstall removes only inventory-owned resources and keeps backups by default. Use `--remove-backups` to remove them too. The `vpnctl` executable is retained because it is owned by the bootstrap/release layer, not the managed VPN inventory.
+Удаляются только ресурсы, принадлежащие инвентарю установки; резервные копии по умолчанию остаются. Чтобы снести и их — `--remove-backups`. Исполняемый файл `vpnctl` сохраняется намеренно: он принадлежит слою bootstrap/release, а не инвентарю управляемого VPN.
 
-## Security
+## Безопасность
 
-Read [SECURITY.md](SECURITY.md). The current bootstrap verifies checksums but does not authenticate publisher identity because the checksum comes from the same channel; the second audit classifies this as Critical and blocks publication.
+Читай [SECURITY.md](SECURITY.md). Текущий bootstrap проверяет контрольные суммы, но не подтверждает личность издателя, потому что сумма приходит по тому же каналу. Второй аудит классифицирует это как Critical и блокирует публикацию.
 
-## Current validation status
+## Что уже проверено, а что нет
 
-Local compilation and automated tests are necessary but insufficient. A production release additionally requires the full Ubuntu 22.04/24.04/26.04 × amd64/arm64 provisioning matrix, reboot and rollback tests, external IPv4/IPv6 scans, and a second independent security audit with no open Critical/High findings.
+Локальная сборка и автотесты необходимы, но недостаточны. Для production-релиза нужны полная матрица Ubuntu 22.04/24.04/26.04 × amd64/arm64, тесты перезагрузки и отката, внешние сканы IPv4/IPv6 и второй независимый аудит безопасности без открытых находок Critical/High.
+
+Ссылки для клиентов проверены на шести клиентских ядрах реальным сетевым путём между двумя сетями — см. [docs/client-compatibility.md](docs/client-compatibility.md). Эта матрица не распространяется на пути мобильных операторов, поэтому зелёный `vpnctl doctor` означает исправность сервера, а не гарантию, что любое приложение в любой сети пропустит трафик.

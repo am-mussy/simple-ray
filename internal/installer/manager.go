@@ -34,6 +34,13 @@ const (
 	serviceUnit   = "/etc/systemd/system/x-ui.service"
 	managedRemark = "vpnctl-vless-reality"
 	serviceUser   = "vpnctl-xui"
+
+	// realityMinClientVer accepts VPN clients of any age. Xray-core 26.7.11
+	// defaults this to 26.3.27, which silently rejects every mainstream mobile
+	// client: the connection still establishes because REALITY relays rejected
+	// clients to its decoy site, so the user sees a connected VPN that carries
+	// no traffic. An empty string is not enough, it selects the default.
+	realityMinClientVer = "0.0.0"
 )
 
 type Request struct {
@@ -412,7 +419,15 @@ func (m *Manager) Install(ctx context.Context, request Request) (result Result, 
 	if err := waitAPIHealth(ctx, api); err != nil {
 		return result, errors.New("Xray failed health check")
 	}
-	if err := verifyRealityTunnel(ctx, filepath.Join(programDir, "bin", "xray-linux-"+check.Architecture), verified.ID, request.PublicAddress, request.ListenPort, request.RealitySNI, keys.PublicKey, shortID); err != nil {
+	// Verify the link 3x-ui will actually hand this user, not one rebuilt from
+	// install parameters. The two agreed until 3x-ui put its own fingerprint in
+	// the URI, and the mismatch was invisible: the synthetic link passed while
+	// the real one connected and carried nothing.
+	clientLink, err := generatedClientLink(ctx, api, name, request.PublicAddress, request.ListenPort)
+	if err != nil {
+		return result, err
+	}
+	if err := verifyRealityTunnel(ctx, filepath.Join(programDir, "bin", "xray-linux-"+check.Architecture), clientLink); err != nil {
 		return result, fmt.Errorf("Reality tunnel failed end-to-end health check: %w", err)
 	}
 	unitSum := sha256.Sum256([]byte(unit))
@@ -746,9 +761,31 @@ func parseToken(output string) (string, error) {
 	return matches[0][1], nil
 }
 
+// generatedClientLink pulls the URI 3x-ui produces for a user and canonicalises
+// it exactly as vpnctl will when handing it out, so installation verifies the
+// artifact the user receives.
+func generatedClientLink(ctx context.Context, api *xui.Client, name, address string, port int) (domain.ClientLink, error) {
+	links, err := api.ClientLinks(ctx, name)
+	if err != nil {
+		return domain.ClientLink{}, fmt.Errorf("3x-ui did not return a client link: %w", err)
+	}
+	if len(links) == 0 {
+		return domain.ClientLink{}, errors.New("3x-ui returned no client link for the first user")
+	}
+	raw, err := domain.PublicClientLink(links[0], address, port, "")
+	if err != nil {
+		return domain.ClientLink{}, fmt.Errorf("client link could not be built: %w", err)
+	}
+	link, err := domain.ParseClientLink(raw)
+	if err != nil {
+		return domain.ClientLink{}, fmt.Errorf("generated client link is invalid: %w", err)
+	}
+	return link, nil
+}
+
 func realityPayload(r Request, keys xui.KeyPair, shortID string) map[string]any {
 	settings := encodeJSON(map[string]any{"clients": []any{}, "decryption": "none", "fallbacks": []any{}})
-	streamSettings := encodeJSON(map[string]any{"network": "tcp", "security": "reality", "externalProxy": []any{}, "realitySettings": map[string]any{"show": false, "xver": 0, "target": r.RealityTarget, "serverNames": []string{r.RealitySNI}, "privateKey": keys.PrivateKey, "shortIds": []string{shortID}, "settings": map[string]any{"publicKey": keys.PublicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"}}, "tcpSettings": map[string]any{"acceptProxyProtocol": false, "header": map[string]any{"type": "none"}}})
+	streamSettings := encodeJSON(map[string]any{"network": "tcp", "security": "reality", "externalProxy": []any{}, "realitySettings": map[string]any{"show": false, "xver": 0, "minClientVer": realityMinClientVer, "target": r.RealityTarget, "serverNames": []string{r.RealitySNI}, "privateKey": keys.PrivateKey, "shortIds": []string{shortID}, "settings": map[string]any{"publicKey": keys.PublicKey, "fingerprint": domain.DefaultFingerprint, "serverName": "", "spiderX": "/"}}, "tcpSettings": map[string]any{"acceptProxyProtocol": false, "header": map[string]any{"type": "none"}}})
 	sniffing := encodeJSON(map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false})
 	return map[string]any{"enable": true, "remark": managedRemark, "listen": "", "port": r.ListenPort, "protocol": "vless", "expiryTime": 0, "total": 0, "settings": settings, "streamSettings": streamSettings, "sniffing": sniffing}
 }

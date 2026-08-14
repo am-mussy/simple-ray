@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +39,10 @@ type Service struct {
 	LockPath   string
 	APIFactory APIFactory
 	Installer  *installer.Manager
+	// Diagnostics and Tunnel are the doctor probes. They default to the real
+	// system probes and are replaced in tests.
+	Diagnostics Probes
+	Tunnel      TunnelProbe
 }
 
 func New(store *state.Store, lockPath string) *Service {
@@ -53,7 +55,7 @@ func New(store *state.Store, lockPath string) *Service {
 func (s *Service) Install(ctx context.Context, request installer.Request) (installer.Result, error) {
 	guard, err := lock.Acquire(s.LockPath, "install")
 	if err != nil {
-		return installer.Result{}, domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+		return installer.Result{}, lockError(err)
 	}
 	defer guard.Release()
 	result, err := s.Installer.Install(ctx, request)
@@ -96,7 +98,7 @@ func (s *Service) Install(ctx context.Context, request installer.Request) (insta
 func (s *Service) Uninstall(ctx context.Context, keepData, removeBackups bool) error {
 	guard, err := lock.Acquire(s.LockPath, "uninstall")
 	if err != nil {
-		return domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+		return lockError(err)
 	}
 	defer guard.Release()
 	installed, err := s.Store.LoadState()
@@ -107,6 +109,17 @@ func (s *Service) Uninstall(ctx context.Context, keepData, removeBackups bool) e
 		return domain.E("UNINSTALL_FAILED", "безопасно удалить vpnctl не удалось", "Исправь конфликт владельца файлов и повтори", 1, err)
 	}
 	return nil
+}
+
+// lockError separates real contention from a lock that cannot be used at all.
+// Reporting a broken lock directory as "another operation is running" makes the
+// user wait for something that will never finish.
+func lockError(err error) error {
+	if errors.Is(err, lock.ErrBusy) {
+		return domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+	}
+	return domain.E("LOCK_UNAVAILABLE", "не удалось взять блокировку vpnctl: "+err.Error(),
+		"Каталог /run/vpnctl должен принадлежать root с правами 0700", 1, err)
 }
 
 func (s *Service) api() (domain.State, API, error) {
@@ -148,7 +161,7 @@ func (s *Service) AddUser(ctx context.Context, rawName string) (domain.User, boo
 	}
 	guard, err := lock.Acquire(s.LockPath, "user-add")
 	if err != nil {
-		return domain.User{}, false, domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+		return domain.User{}, false, lockError(err)
 	}
 	defer guard.Release()
 	installation, api, err := s.api()
@@ -187,7 +200,7 @@ func (s *Service) RemoveUser(ctx context.Context, rawName string) (int, error) {
 	}
 	guard, err := lock.Acquire(s.LockPath, "user-remove")
 	if err != nil {
-		return 0, domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+		return 0, lockError(err)
 	}
 	defer guard.Release()
 	installation, api, err := s.api()
@@ -229,7 +242,10 @@ func (s *Service) ListUsers(ctx context.Context) ([]domain.User, error) {
 	return toUsersForInbound(clients, installation.InboundID), nil
 }
 
-func (s *Service) UserLink(ctx context.Context, rawName string) (domain.User, string, error) {
+// UserLink returns the connection URI for a user. An empty fingerprint selects
+// domain.DefaultFingerprint; a caller passes one only to rescue a client app
+// whose uTLS build cannot complete the handshake with the default.
+func (s *Service) UserLink(ctx context.Context, rawName, fingerprint string) (domain.User, string, error) {
 	name, err := domain.ValidateUserName(rawName)
 	if err != nil {
 		return domain.User{}, "", domain.E("INVALID_USER_NAME", "некорректное имя VPN-пользователя", err.Error(), 2, err)
@@ -255,33 +271,17 @@ func (s *Service) UserLink(ctx context.Context, rawName string) (domain.User, st
 	if len(links) == 0 {
 		return domain.User{}, "", domain.E("LINK_UNAVAILABLE", "не удалось создать ссылку VPN-клиента", "Запусти sudo vpnctl doctor", 1, nil)
 	}
-	link, err := publicClientLink(links[0], installation.PublicAddress, installation.ListenPort)
+	link, err := domain.PublicClientLink(links[0], installation.PublicAddress, installation.ListenPort, fingerprint)
 	if err != nil {
-		return domain.User{}, "", domain.E("LINK_UNAVAILABLE", "3x-ui вернул некорректную ссылку VPN-клиента", "Запусти sudo vpnctl doctor", 1, err)
+		return domain.User{}, "", domain.E("LINK_UNAVAILABLE", "не удалось собрать ссылку VPN-клиента: "+err.Error(), "Запусти sudo vpnctl doctor", 1, err)
 	}
 	return toUser(record), link, nil
-}
-
-func publicClientLink(raw, address string, port int) (string, error) {
-	link, err := url.Parse(raw)
-	if err != nil || link.Scheme != "vless" || link.User == nil || link.User.Username() == "" || link.User.String() != link.User.Username() {
-		return "", errors.New("invalid VLESS URI")
-	}
-	if net.ParseIP(address) == nil || port < 1 || port > 65535 {
-		return "", errors.New("invalid public endpoint")
-	}
-	link.Host = net.JoinHostPort(address, strconv.Itoa(port))
-	link.Path = ""
-	query := link.Query()
-	query.Set("encryption", "none")
-	link.RawQuery = query.Encode()
-	return link.String(), nil
 }
 
 func (s *Service) Backup(ctx context.Context, destination string, plaintextAcknowledged bool) (backup.Result, error) {
 	guard, err := lock.Acquire(s.LockPath, "backup")
 	if err != nil {
-		return backup.Result{}, domain.E("LOCKED", "уже выполняется другая операция vpnctl", "Дождись её завершения и повтори", 3, err)
+		return backup.Result{}, lockError(err)
 	}
 	defer guard.Release()
 	installation, api, err := s.api()
@@ -300,37 +300,6 @@ func (s *Service) Backup(ctx context.Context, destination string, plaintextAckno
 		return backup.Result{}, domain.E("BACKUP_FAILED", "не удалось создать резервную копию", "Существующие копии не были перезаписаны", 1, err)
 	}
 	return result, nil
-}
-
-func (s *Service) Doctor(ctx context.Context) []domain.Check {
-	checks := []domain.Check{{Group: "Система", Name: "состояние vpnctl", Status: "passed"}}
-	installation, api, err := s.api()
-	if err != nil {
-		checks[0].Status = "failed"
-		checks[0].Reason = err.Error()
-		return checks
-	}
-	checks = append(checks,
-		domain.Check{Group: "Сеть", Name: "панель доступна только локально", Status: boolStatus(installation.PanelListen == "127.0.0.1")},
-		domain.Check{Group: "Конфигурация", Name: "подключение VLESS Reality", Status: boolStatus(installation.InboundID > 0 && installation.RealitySNI != "")},
-	)
-	status, err := api.Status(ctx)
-	if err != nil {
-		checks = append(checks, domain.Check{Group: "Сервисы", Name: "API 3x-ui", Status: "failed", Reason: "локальный API недоступен"})
-	} else {
-		checks = append(checks,
-			domain.Check{Group: "Сервисы", Name: "API 3x-ui", Status: "passed"},
-			domain.Check{Group: "Сервисы", Name: "Xray", Status: boolStatus(status.XrayRunning())},
-		)
-	}
-	return checks
-}
-
-func boolStatus(value bool) string {
-	if value {
-		return "passed"
-	}
-	return "failed"
 }
 
 func toUsers(records []xui.ClientRecord) []domain.User {

@@ -5,8 +5,14 @@ package installer
 import (
 	"context"
 	"errors"
+
+	"github.com/mussy/simple-ray/internal/domain"
 )
 
-func verifyRealityTunnel(context.Context, string, string, string, int, string, string, string) error {
+func verifyRealityTunnel(context.Context, string, domain.ClientLink) error {
 	return errors.New("Linux required")
+}
+
+func ProbeClientLink(context.Context, string, domain.ClientLink) (string, error) {
+	return "", errors.New("Linux required")
 }

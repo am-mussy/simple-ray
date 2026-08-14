@@ -36,7 +36,7 @@ func acquire(path, operation string) (*Lock, error) {
 	}
 	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
-			return closeOnError(fmt.Errorf("another vpnctl mutation is active (%s)", operation))
+			return closeOnError(fmt.Errorf("%w (%s)", ErrBusy, operation))
 		}
 		return closeOnError(fmt.Errorf("acquire mutation lock: %w", err))
 	}

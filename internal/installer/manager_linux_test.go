@@ -83,8 +83,12 @@ func TestRealityPayloadMatchesV350Shape(t *testing.T) {
 	if !ok || reality["target"] != "example.com:443" || reality["privateKey"] != "private" {
 		t.Fatalf("reality settings = %#v", stream["realitySettings"])
 	}
-	if _, exists := reality["minClientVer"]; exists {
-		t.Fatalf("unexpected minimum client version = %#v", reality["minClientVer"])
+	// Xray-core 26.7.11 defaults minClientVer to 26.3.27 when this is absent or
+	// empty, which rejects mainstream clients. Rejected clients are relayed to
+	// the decoy site rather than disconnected, so the VPN looks connected and
+	// carries no traffic. The value must be set explicitly and permissively.
+	if reality["minClientVer"] != realityMinClientVer {
+		t.Fatalf("minimum client version = %#v, want %q", reality["minClientVer"], realityMinClientVer)
 	}
 }
 
